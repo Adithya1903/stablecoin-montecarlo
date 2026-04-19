@@ -116,6 +116,37 @@ export async function fetchEthMarketData(): Promise<EthMarketData> {
   };
 }
 
+export async function fetchBtcMarketData(): Promise<EthMarketData> {
+  const [simple, chart] = await Promise.all([
+    fetchJson<{ bitcoin: { usd: number } }>(
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+    ),
+    fetchJson<CgMarketChartResponse>(
+      "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=365"
+    ),
+  ]);
+  const prices = chart.prices;
+  const dailyReturns: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    const prev = prices[i - 1][1];
+    const curr = prices[i][1];
+    if (prev > 0) dailyReturns.push((curr - prev) / prev);
+  }
+  const n = dailyReturns.length;
+  const meanReturn = n > 0 ? dailyReturns.reduce((a, b) => a + b, 0) / n : 0;
+  const variance =
+    n > 1
+      ? dailyReturns.reduce((s, r) => s + (r - meanReturn) ** 2, 0) / (n - 1)
+      : 0;
+  return {
+    spotUsd: simple.bitcoin.usd,
+    prices,
+    dailyReturns,
+    meanReturn,
+    volatility: Math.sqrt(variance),
+  };
+}
+
 interface BinanceFundingRateEntry {
   symbol: string;
   fundingTime: number;

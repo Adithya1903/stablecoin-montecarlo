@@ -16,6 +16,10 @@ export type SimulationParams = {
   initialCrash: number; // forced day-1 drop (0 to -0.6)
   collateralRatio: number; // current CR (e.g., 1.5 = 150%)
   liquidationThreshold: number; // e.g., 1.45 = 145%
+  /** USBD-only: simulate stBTC/BTC basis risk alongside BTC price. */
+  lstBasisRisk?: boolean;
+  /** Optional weights of BTC vs stBTC leg (must sum to 1). Only read when lstBasisRisk is true. */
+  lstWeights?: { btc: number; stBtc: number };
 };
 
 export type SimulationResult = {

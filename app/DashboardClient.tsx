@@ -6,7 +6,7 @@ import { ScenarioAnalysis } from "@/components/ScenarioAnalysis";
 import { SimulationChart } from "@/components/SimulationChart";
 import { SliderPanel } from "@/components/SliderPanel";
 import { StablecoinSelector } from "@/components/StablecoinSelector";
-import { simulateDAI } from "@/lib/montecarlo";
+import { simulateDAI, simulateOvercollateralizedBTC } from "@/lib/montecarlo";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
 
@@ -16,7 +16,7 @@ const DEFAULTS: SimulationParams = {
   numSimulations: 10000,
   initialCrash: 0,
   collateralRatio: 1.5,
-  liquidationThreshold: 1.10,
+  liquidationThreshold: 1.1,
 };
 
 type RunState = {
@@ -27,33 +27,91 @@ type RunState = {
 
 type Summary = { pegPrice: number | null; marketCapUsd: number };
 
+function isBtcBacked(coin: StablecoinConfig | undefined): boolean {
+  if (!coin?.collateralAssets) return false;
+  return coin.collateralAssets.some(
+    (a) => /^(BTC|stBTC|wBTC)/i.test(a.asset) && a.weight > 0.3
+  );
+}
+
+function lstWeights(
+  coin: StablecoinConfig | undefined
+): { btc: number; stBtc: number } | undefined {
+  if (!coin?.collateralAssets) return undefined;
+  const btc = coin.collateralAssets.find((a) => /^BTC$/i.test(a.asset));
+  const stBtc = coin.collateralAssets.find((a) => /^stBTC/i.test(a.asset));
+  if (!btc || !stBtc) return undefined;
+  return { btc: btc.weight, stBtc: stBtc.weight };
+}
+
+function validateResult(r: SimulationResult): string | null {
+  if (!(r.depegProbability >= 0 && r.depegProbability <= 1)) {
+    return `depegProbability out of range: ${r.depegProbability}`;
+  }
+  for (let i = 0; i < r.paths.length; i++) {
+    const path = r.paths[i];
+    for (let d = 0; d < path.length; d++) {
+      const v = path[d];
+      if (!Number.isFinite(v) || v < 0) {
+        return `invalid path value at [${i}][${d}] = ${v}`;
+      }
+    }
+  }
+  return null;
+}
+
 export function DashboardClient({
   ethPrice,
+  btcPrice,
   summaries = {},
+  fetchError = null,
 }: {
   ethPrice: number;
+  btcPrice: number;
   summaries?: Record<string, Summary>;
+  fetchError?: string | null;
 }) {
   const [selectedId, setSelectedId] = useState<string>("dai");
   const selected = getStablecoin(selectedId);
+  const btcBacked = isBtcBacked(selected);
+  const underlyingPrice = btcBacked ? btcPrice : ethPrice;
+  const underlyingLabel = btcBacked ? "BTC" : "ETH";
+
   const [params, setParams] = useState<SimulationParams>(DEFAULTS);
 
   const handleSelect = (coin: StablecoinConfig) => {
     setSelectedId(coin.id);
+    const weights = lstWeights(coin);
     setParams((prev) => ({
       ...prev,
       collateralRatio: coin.defaultCR ?? prev.collateralRatio,
-      liquidationThreshold: coin.defaultLiqThreshold ?? prev.liquidationThreshold,
+      liquidationThreshold:
+        coin.defaultLiqThreshold ?? prev.liquidationThreshold,
+      lstBasisRisk: coin.id === "usbd" ? (prev.lstBasisRisk ?? false) : false,
+      lstWeights: weights,
     }));
   };
+
   const [run, setRun] = useState<RunState | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(fetchError);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!Number.isFinite(ethPrice) || ethPrice <= 0) {
-      setError(`Invalid ETH price: ${ethPrice}`);
+    if (fetchError) {
+      setError(fetchError);
+      setPending(false);
+      return;
+    }
+    if (!Number.isFinite(underlyingPrice) || underlyingPrice <= 0) {
+      setError(`Invalid ${underlyingLabel} price: ${underlyingPrice}`);
+      setPending(false);
+      return;
+    }
+    if (params.liquidationThreshold >= params.collateralRatio) {
+      setError(
+        `Liquidation threshold (${params.liquidationThreshold}) must be below collateral ratio (${params.collateralRatio})`
+      );
       setPending(false);
       return;
     }
@@ -62,11 +120,23 @@ export function DashboardClient({
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       try {
-        console.log("[sim] start", { ethPrice, params });
+        console.log("[sim] start", { coin: selectedId, underlyingPrice, params });
         const t0 = performance.now();
-        const result = simulateDAI(ethPrice, params);
+        const useBtcSim = btcBacked;
+        const result = useBtcSim
+          ? simulateOvercollateralizedBTC(underlyingPrice, params)
+          : simulateDAI(underlyingPrice, params);
         const t1 = performance.now();
-        console.log("[sim] done", { elapsedMs: t1 - t0, depegProbability: result.depegProbability });
+        const bad = validateResult(result);
+        if (bad) {
+          console.error("[sim] sanity check failed:", bad);
+          setError(`Sanity check failed: ${bad}`);
+          return;
+        }
+        console.log("[sim] done", {
+          elapsedMs: t1 - t0,
+          depegProbability: result.depegProbability,
+        });
         setRun({ result, elapsedMs: t1 - t0, params });
       } catch (e) {
         console.error("[sim] error", e);
@@ -78,11 +148,13 @@ export function DashboardClient({
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [ethPrice, params]);
+  }, [underlyingPrice, underlyingLabel, btcBacked, selectedId, params, fetchError]);
 
   const liqPrice = useMemo(
-    () => ethPrice * (params.liquidationThreshold / params.collateralRatio),
-    [ethPrice, params.liquidationThreshold, params.collateralRatio]
+    () =>
+      underlyingPrice *
+      (params.liquidationThreshold / params.collateralRatio),
+    [underlyingPrice, params.liquidationThreshold, params.collateralRatio]
   );
 
   return (
@@ -103,8 +175,8 @@ export function DashboardClient({
         </p>
         <div className="mt-4 flex flex-wrap gap-6 font-mono text-xs text-muted">
           <div>
-            ETH spot:{" "}
-            <span className="text-cream">${ethPrice.toFixed(2)}</span>
+            {underlyingLabel} spot:{" "}
+            <span className="text-cream">${underlyingPrice.toFixed(2)}</span>
           </div>
           <div>
             Liquidation price:{" "}
@@ -134,23 +206,27 @@ export function DashboardClient({
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-5">
-          {run ? (
+          {error ? (
+            <div className="flex h-[400px] items-center justify-center rounded-xl border border-red-500/40 bg-red-500/5 px-6 text-center font-mono text-sm text-red-400">
+              {error}
+            </div>
+          ) : run ? (
             <>
               <SimulationChart
                 result={run.result}
-                currentPrice={ethPrice}
+                currentPrice={underlyingPrice}
                 liquidationThreshold={run.params.liquidationThreshold}
                 collateralRatio={run.params.collateralRatio}
                 elapsedMs={run.elapsedMs}
               />
               <ResultsPanel
                 result={run.result}
-                currentPrice={ethPrice}
+                currentPrice={underlyingPrice}
               />
               <ScenarioAnalysis
                 params={run.params}
                 result={run.result}
-                ethPrice={ethPrice}
+                ethPrice={underlyingPrice}
               />
               {pending && (
                 <p className="font-mono text-xs text-muted">
@@ -158,10 +234,6 @@ export function DashboardClient({
                 </p>
               )}
             </>
-          ) : error ? (
-            <div className="flex h-[400px] items-center justify-center rounded-xl border border-red-500/40 bg-red-500/5 px-6 text-center font-mono text-sm text-red-400">
-              Simulation failed: {error}
-            </div>
           ) : (
             <div className="flex h-[400px] items-center justify-center rounded-xl border border-stroke bg-surface/30 font-mono text-sm text-muted">
               Running 10,000 simulations…
@@ -170,7 +242,11 @@ export function DashboardClient({
         </div>
 
         <aside>
-          <SliderPanel params={params} onChange={setParams} />
+          <SliderPanel
+            params={params}
+            onChange={setParams}
+            selectedId={selectedId}
+          />
         </aside>
       </div>
     </div>
