@@ -20,6 +20,8 @@ export type SimulationParams = {
   lstBasisRisk?: boolean;
   /** Optional weights of BTC vs stBTC leg (must sum to 1). Only read when lstBasisRisk is true. */
   lstWeights?: { btc: number; stBtc: number };
+  /** DAI-only: day-1 USDC depeg shock (e.g., -0.10 = USDC drops to $0.90). 0 = no shock. */
+  usdcShock?: number;
 };
 
 export type SimulationResult = {

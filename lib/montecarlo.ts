@@ -105,11 +105,100 @@ export function simulatePaths(
   };
 }
 
+/**
+ * DAI sim with USDC PSM dependency. ~35% of DAI's backing sits in the Peg
+ * Stability Module as USDC, so a USDC depeg reduces DAI's effective
+ * collateral even if ETH is fine (see SVB, March 2023). When `usdcShock`
+ * is 0 this degrades to `simulatePaths` (ETH-only) for parity.
+ */
 export function simulateDAI(
-  currentPrice: number,
+  ethPrice: number,
   params: SimulationParams
 ): SimulationResult {
-  return simulatePaths(currentPrice, params);
+  const shock = params.usdcShock ?? 0;
+  if (shock === 0) return simulatePaths(ethPrice, params);
+
+  const {
+    volatility,
+    days,
+    numSimulations,
+    initialCrash,
+    collateralRatio,
+    liquidationThreshold,
+  } = params;
+
+  const ETH_WEIGHT = 0.65;
+  const USDC_WEIGHT = 0.35;
+  const USDC_NOISE = 0.001;
+  const USDC_REVERT = 1 / 7; // ~7-day mean reversion toward $1
+
+  const pathLen = days + 1;
+  const paths: number[][] = new Array(numSimulations);
+  const depegDays: (number | null)[] = new Array(numSimulations);
+  const finalEff = new Float64Array(numSimulations);
+  let depegCount = 0;
+
+  const startEff = ETH_WEIGHT * ethPrice + USDC_WEIGHT * ethPrice;
+  // Effective-collateral path is reported in ETH-denominated units (same base
+  // as startEff) so downstream UI keeps a single numeric scale.
+
+  for (let i = 0; i < numSimulations; i++) {
+    const path = new Array<number>(pathLen);
+    path[0] = startEff;
+    let eth = ethPrice;
+    let usdc = 1.0;
+    let firstDepeg: number | null = null;
+
+    for (let d = 1; d <= days; d++) {
+      if (d === 1 && initialCrash !== 0) eth = eth * (1 + initialCrash);
+      else eth = eth * (1 + randomNormal(0, volatility));
+
+      if (d === 1) usdc = 1.0 + shock;
+      else usdc = usdc + USDC_REVERT * (1.0 - usdc) + randomNormal(0, USDC_NOISE);
+      if (usdc < 0) usdc = 0;
+
+      const eff = ETH_WEIGHT * eth + USDC_WEIGHT * ethPrice * usdc;
+      path[d] = eff;
+
+      if (firstDepeg === null) {
+        const ratio = (eff / startEff) * collateralRatio;
+        if (ratio < liquidationThreshold) firstDepeg = d;
+      }
+    }
+
+    paths[i] = path;
+    depegDays[i] = firstDepeg;
+    finalEff[i] = path[days];
+    if (firstDepeg !== null) depegCount++;
+  }
+
+  const medianPath = new Array<number>(pathLen);
+  const percentile5Path = new Array<number>(pathLen);
+  const percentile95Path = new Array<number>(pathLen);
+  const column = new Array<number>(numSimulations);
+  for (let d = 0; d < pathLen; d++) {
+    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
+    const sorted = column.slice().sort((a, b) => a - b);
+    percentile5Path[d] = quantile(sorted, 0.05);
+    medianPath[d] = quantile(sorted, 0.5);
+    percentile95Path[d] = quantile(sorted, 0.95);
+  }
+
+  let worstIdx = 0;
+  for (let i = 1; i < numSimulations; i++) {
+    if (finalEff[i] < finalEff[worstIdx]) worstIdx = i;
+  }
+
+  return {
+    paths,
+    depegCount,
+    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegDays,
+    worstPath: paths[worstIdx],
+    medianPath,
+    percentile5Path,
+    percentile95Path,
+  };
 }
 
 /**

@@ -204,6 +204,21 @@ function renderSetup(
     );
   }
 
+  const shock = p.usdcShock ?? 0;
+  if (shock < 0) {
+    const usdcPrice = 1 + shock;
+    paragraphs.push(
+      <p key="usdc">
+        You&apos;re simulating USDC dropping to{" "}
+        <HiAccent tone="bad">${usdcPrice.toFixed(2)}</HiAccent> on day 1. Since
+        ~<Hi>35%</Hi> of DAI&apos;s backing sits in the USDC Peg Stability
+        Module, this directly reduces DAI&apos;s effective collateral even if
+        ETH price is unaffected — the mechanism that transmitted the{" "}
+        <Hi>SVB contagion</Hi> to DAI in March 2023.
+      </p>
+    );
+  }
+
   if (p.initialCrash <= -0.2) {
     const crashPct = p.initialCrash * 100;
     const postCrashPrice = ethPrice * (1 + p.initialCrash);

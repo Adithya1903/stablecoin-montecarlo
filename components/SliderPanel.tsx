@@ -30,6 +30,10 @@ const PRESETS: Preset[] = [
     label: "Conservative",
     patch: { volatility: 0.04, initialCrash: 0, collateralRatio: 2.0 },
   },
+  {
+    label: "SVB Crisis",
+    patch: { volatility: 0.06, initialCrash: 0, usdcShock: -0.1 },
+  },
 ];
 
 export function SliderPanel({ params, onChange, selectedId }: Props) {
@@ -120,6 +124,23 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
           patch({ liquidationThreshold: Math.min(v, liqMax) })
         }
       />
+
+      {selectedId === "dai" && (
+        <Slider
+          label="USDC Depeg Shock"
+          value={-(params.usdcShock ?? 0)}
+          min={0}
+          max={0.15}
+          step={0.01}
+          display={
+            (params.usdcShock ?? 0) === 0
+              ? "0%"
+              : `${((params.usdcShock ?? 0) * 100).toFixed(0)}%`
+          }
+          subtitle="Simulate USDC losing its peg (e.g., SVB scenario). ~35% of DAI backing is USDC."
+          onChange={(v) => patch({ usdcShock: v === 0 ? 0 : -v })}
+        />
+      )}
 
       {selectedId === "usbd" && (
         <div className="rounded-md border border-stroke bg-charcoal/60 p-3">
