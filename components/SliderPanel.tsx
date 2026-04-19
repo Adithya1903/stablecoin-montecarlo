@@ -69,13 +69,13 @@ export function SliderPanel({ params, onChange }: Props) {
 
       <Slider
         label="Day 1 Crash"
-        value={params.initialCrash}
-        min={-0.6}
-        max={0}
+        value={-params.initialCrash}
+        min={0}
+        max={0.6}
         step={0.05}
         display={signedPct(params.initialCrash)}
         subtitle="Force a crash on the first day. -50% = Black Thursday."
-        onChange={(v) => patch({ initialCrash: v })}
+        onChange={(v) => patch({ initialCrash: -v })}
       />
 
       <Slider

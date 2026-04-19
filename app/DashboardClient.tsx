@@ -14,7 +14,7 @@ const DEFAULTS: SimulationParams = {
   numSimulations: 10000,
   initialCrash: 0,
   collateralRatio: 1.5,
-  liquidationThreshold: 1.45,
+  liquidationThreshold: 1.10,
 };
 
 type RunState = {
@@ -27,17 +27,32 @@ export function DashboardClient({ ethPrice }: { ethPrice: number }) {
   const [params, setParams] = useState<SimulationParams>(DEFAULTS);
   const [run, setRun] = useState<RunState | null>(null);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (!Number.isFinite(ethPrice) || ethPrice <= 0) {
+      setError(`Invalid ETH price: ${ethPrice}`);
+      setPending(false);
+      return;
+    }
     setPending(true);
+    setError(null);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      const t0 = performance.now();
-      const result = simulateDAI(ethPrice, params);
-      const t1 = performance.now();
-      setRun({ result, elapsedMs: t1 - t0, params });
-      setPending(false);
+      try {
+        console.log("[sim] start", { ethPrice, params });
+        const t0 = performance.now();
+        const result = simulateDAI(ethPrice, params);
+        const t1 = performance.now();
+        console.log("[sim] done", { elapsedMs: t1 - t0, depegProbability: result.depegProbability });
+        setRun({ result, elapsedMs: t1 - t0, params });
+      } catch (e) {
+        console.error("[sim] error", e);
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPending(false);
+      }
     }, 300);
     return () => {
       if (timer.current) clearTimeout(timer.current);
@@ -113,6 +128,10 @@ export function DashboardClient({ ethPrice }: { ethPrice: number }) {
                 </p>
               )}
             </>
+          ) : error ? (
+            <div className="flex h-[400px] items-center justify-center rounded-xl border border-red-500/40 bg-red-500/5 px-6 text-center font-mono text-sm text-red-400">
+              Simulation failed: {error}
+            </div>
           ) : (
             <div className="flex h-[400px] items-center justify-center rounded-xl border border-stroke bg-surface/30 font-mono text-sm text-muted">
               Running 10,000 simulations…
