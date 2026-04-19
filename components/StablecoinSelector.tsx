@@ -1,61 +1,101 @@
 "use client";
 
-import type { MarketSnapshot, StablecoinId } from "@/lib/types";
-
-const ORDER: StablecoinId[] = ["DAI", "USDe", "crvUSD"];
+import { useState } from "react";
+import { STABLECOINS, type StablecoinConfig, type StablecoinMechanism } from "@/lib/stablecoins";
 
 type Props = {
-  selected: StablecoinId;
-  onSelect: (id: StablecoinId) => void;
-  snapshots: Partial<Record<StablecoinId, MarketSnapshot>>;
-  loadingId?: StablecoinId | null;
+  selectedId: string;
+  onSelect: (coin: StablecoinConfig) => void;
 };
 
-export function StablecoinSelector({
-  selected,
-  onSelect,
-  snapshots,
-  loadingId,
-}: Props) {
+const MECHANISM_LABEL: Record<StablecoinMechanism, string> = {
+  overcollateralized: "Overcollateralized",
+  "delta-neutral": "Delta-neutral",
+  "fiat-backed": "Fiat-backed",
+  algorithmic: "Algorithmic",
+};
+
+const MECHANISM_ORDER: StablecoinMechanism[] = [
+  "overcollateralized",
+  "delta-neutral",
+  "fiat-backed",
+  "algorithmic",
+];
+
+export function StablecoinSelector({ selectedId, onSelect }: Props) {
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      {ORDER.map((id) => {
-        const snap = snapshots[id];
-        const active = selected === id;
-        const loading = loadingId === id;
+    <div className="space-y-4">
+      {MECHANISM_ORDER.map((mech) => {
+        const coins = STABLECOINS.filter((c) => c.mechanism === mech);
+        if (coins.length === 0) return null;
         return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onSelect(id)}
-            className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-              active
-                ? "border-cream bg-surface shadow-[0_0_0_1px_#F5F3EE33]"
-                : "border-stroke bg-charcoal hover:border-muted"
-            }`}
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-sm font-medium tracking-tight">{id}</span>
-              {loading && (
-                <span className="font-mono text-xs text-muted">…</span>
-              )}
+          <div key={mech}>
+            <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-muted">
+              {MECHANISM_LABEL[mech]}
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {coins.map((coin) => (
+                <CoinButton
+                  key={coin.id}
+                  coin={coin}
+                  active={coin.id === selectedId}
+                  onClick={() => onSelect(coin)}
+                />
+              ))}
             </div>
-            {snap && (
-              <p className="mt-2 font-mono text-lg text-cream">
-                ${snap.priceUsd.toFixed(4)}
-              </p>
-            )}
-            {!snap && !loading && (
-              <p className="mt-2 font-mono text-sm text-muted">—</p>
-            )}
-            {snap?.marketCapUsd != null && (
-              <p className="mt-1 text-xs text-muted">
-                MCap ≈ ${(snap.marketCapUsd / 1e9).toFixed(2)}B
-              </p>
-            )}
-          </button>
+          </div>
         );
       })}
     </div>
+  );
+}
+
+function CoinButton({
+  coin,
+  active,
+  onClick,
+}: {
+  coin: StablecoinConfig;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImg = coin.logoUrl && !imgFailed;
+  const dim = coin.status !== "active";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={coin.description}
+      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-left transition ${
+        active
+          ? "border-cream bg-surface"
+          : "border-stroke bg-charcoal hover:border-muted"
+      } ${dim ? "opacity-60" : ""}`}
+    >
+      <span className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-stroke/30 text-base">
+        {showImg ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={coin.logoUrl}
+            alt=""
+            width={24}
+            height={24}
+            className="h-6 w-6"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          coin.fallbackEmoji
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-cream">
+          {coin.symbol}
+        </span>
+        <span className="block truncate text-[10px] text-muted">
+          {coin.status === "collapsed" ? "collapsed" : coin.chain}
+        </span>
+      </span>
+    </button>
   );
 }

@@ -5,7 +5,9 @@ import { ResultsPanel } from "@/components/ResultsPanel";
 import { ScenarioAnalysis } from "@/components/ScenarioAnalysis";
 import { SimulationChart } from "@/components/SimulationChart";
 import { SliderPanel } from "@/components/SliderPanel";
+import { StablecoinSelector } from "@/components/StablecoinSelector";
 import { simulateDAI } from "@/lib/montecarlo";
+import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
 
 const DEFAULTS: SimulationParams = {
@@ -24,7 +26,18 @@ type RunState = {
 };
 
 export function DashboardClient({ ethPrice }: { ethPrice: number }) {
+  const [selectedId, setSelectedId] = useState<string>("dai");
+  const selected = getStablecoin(selectedId);
   const [params, setParams] = useState<SimulationParams>(DEFAULTS);
+
+  const handleSelect = (coin: StablecoinConfig) => {
+    setSelectedId(coin.id);
+    setParams((prev) => ({
+      ...prev,
+      collateralRatio: coin.defaultCR ?? prev.collateralRatio,
+      liquidationThreshold: coin.defaultLiqThreshold ?? prev.liquidationThreshold,
+    }));
+  };
   const [run, setRun] = useState<RunState | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,10 +87,11 @@ export function DashboardClient({ ethPrice }: { ethPrice: number }) {
           Stablecoin stress dashboard
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
-          10,000 simulated price paths for DAI collateral. Drag the sliders to
-          change volatility, shock scenarios, or the buffer between CR and
-          liquidation threshold. Red paths breached liquidation; blue paths
-          survived.
+          10,000 simulated price paths for{" "}
+          <span className="text-cream">{selected?.name ?? "DAI"}</span>{" "}
+          collateral. Pick a stablecoin, then drag the sliders to change
+          volatility, shock scenarios, or the buffer between CR and liquidation
+          threshold. Red paths breached liquidation; blue paths survived.
         </p>
         <div className="mt-4 flex flex-wrap gap-6 font-mono text-xs text-muted">
           <div>
@@ -101,6 +115,10 @@ export function DashboardClient({ ethPrice }: { ethPrice: number }) {
           </div>
         </div>
       </header>
+
+      <div className="mb-8">
+        <StablecoinSelector selectedId={selectedId} onSelect={handleSelect} />
+      </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-5">
