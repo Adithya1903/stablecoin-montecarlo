@@ -25,7 +25,15 @@ type RunState = {
   params: SimulationParams;
 };
 
-export function DashboardClient({ ethPrice }: { ethPrice: number }) {
+type Summary = { pegPrice: number | null; marketCapUsd: number };
+
+export function DashboardClient({
+  ethPrice,
+  summaries = {},
+}: {
+  ethPrice: number;
+  summaries?: Record<string, Summary>;
+}) {
   const [selectedId, setSelectedId] = useState<string>("dai");
   const selected = getStablecoin(selectedId);
   const [params, setParams] = useState<SimulationParams>(DEFAULTS);
@@ -117,7 +125,11 @@ export function DashboardClient({ ethPrice }: { ethPrice: number }) {
       </header>
 
       <div className="mb-8">
-        <StablecoinSelector selectedId={selectedId} onSelect={handleSelect} />
+        <StablecoinSelector
+          selectedId={selectedId}
+          onSelect={handleSelect}
+          summaries={summaries}
+        />
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">

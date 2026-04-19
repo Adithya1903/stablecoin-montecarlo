@@ -3,9 +3,12 @@
 import { useState } from "react";
 import { STABLECOINS, type StablecoinConfig, type StablecoinMechanism } from "@/lib/stablecoins";
 
+type Summary = { pegPrice: number | null; marketCapUsd: number };
+
 type Props = {
   selectedId: string;
   onSelect: (coin: StablecoinConfig) => void;
+  summaries?: Record<string, Summary>;
 };
 
 const MECHANISM_LABEL: Record<StablecoinMechanism, string> = {
@@ -22,7 +25,7 @@ const MECHANISM_ORDER: StablecoinMechanism[] = [
   "algorithmic",
 ];
 
-export function StablecoinSelector({ selectedId, onSelect }: Props) {
+export function StablecoinSelector({ selectedId, onSelect, summaries = {} }: Props) {
   return (
     <div className="space-y-4">
       {MECHANISM_ORDER.map((mech) => {
@@ -39,6 +42,7 @@ export function StablecoinSelector({ selectedId, onSelect }: Props) {
                   key={coin.id}
                   coin={coin}
                   active={coin.id === selectedId}
+                  summary={summaries[coin.id]}
                   onClick={() => onSelect(coin)}
                 />
               ))}
@@ -53,15 +57,20 @@ export function StablecoinSelector({ selectedId, onSelect }: Props) {
 function CoinButton({
   coin,
   active,
+  summary,
   onClick,
 }: {
   coin: StablecoinConfig;
   active: boolean;
+  summary?: Summary;
   onClick: () => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const showImg = coin.logoUrl && !imgFailed;
   const dim = coin.status !== "active";
+  const peg = summary?.pegPrice;
+  const mcap = summary?.marketCapUsd ?? 0;
+  const pegOff = typeof peg === "number" ? Math.abs(peg - 1) > 0.01 : false;
   return (
     <button
       type="button"
@@ -73,7 +82,7 @@ function CoinButton({
           : "border-stroke bg-charcoal hover:border-muted"
       } ${dim ? "opacity-60" : ""}`}
     >
-      <span className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-stroke/30 text-base">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-stroke/30 text-base">
         {showImg ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -89,13 +98,34 @@ function CoinButton({
         )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-cream">
-          {coin.symbol}
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-sm font-medium text-cream">
+            {coin.symbol}
+          </span>
+          {typeof peg === "number" && (
+            <span
+              className={`font-mono text-[10px] ${
+                pegOff ? "text-amber-400" : "text-muted"
+              }`}
+            >
+              ${peg.toFixed(3)}
+            </span>
+          )}
         </span>
         <span className="block truncate text-[10px] text-muted">
-          {coin.status === "collapsed" ? "collapsed" : coin.chain}
+          {coin.status === "collapsed"
+            ? "collapsed"
+            : mcap > 0
+              ? `${formatCap(mcap)} · ${coin.chain}`
+              : coin.chain}
         </span>
       </span>
     </button>
   );
+}
+
+function formatCap(usd: number): string {
+  if (usd >= 1e9) return `$${(usd / 1e9).toFixed(1)}B`;
+  if (usd >= 1e6) return `$${(usd / 1e6).toFixed(0)}M`;
+  return `$${(usd / 1e3).toFixed(0)}K`;
 }

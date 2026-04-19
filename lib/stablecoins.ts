@@ -237,6 +237,25 @@ export const STABLECOINS: StablecoinConfig[] = [
     defillamaId: "20",
   },
   {
+    id: "usbd",
+    name: "USBD",
+    symbol: "USBD",
+    logoUrl: "",
+    fallbackEmoji: "₿",
+    mechanism: "overcollateralized",
+    chain: "multi-chain (EVMs, Bitcoin L2s, Solana)",
+    description:
+      "BIMA Labs' Bitcoin-backed stablecoin collateralized by BTC and Babylon-staked BTC (stBTC).",
+    status: "active",
+    collateralAssets: [
+      { asset: "BTC", weight: 0.6 },
+      { asset: "stBTC", weight: 0.4 },
+    ],
+    defaultCR: 2.25,
+    defaultLiqThreshold: 1.6,
+    defillamaId: "253",
+  },
+  {
     id: "eusd",
     name: "Lybra eUSD",
     symbol: "eUSD",

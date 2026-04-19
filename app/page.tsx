@@ -1,5 +1,6 @@
 import { DashboardClient } from "./DashboardClient";
 import { fetchEthMarketData } from "@/lib/data";
+import { fetchStablecoinSummaries } from "@/lib/stablecoinData";
 
 export const dynamic = "force-dynamic";
 
@@ -11,5 +12,9 @@ export default async function Home() {
   } catch (e) {
     console.error("[page] fetchEthMarketData failed, using fallback", e);
   }
-  return <DashboardClient ethPrice={spotUsd} />;
+  const summaries = await fetchStablecoinSummaries().catch((e) => {
+    console.error("[page] fetchStablecoinSummaries failed", e);
+    return {};
+  });
+  return <DashboardClient ethPrice={spotUsd} summaries={summaries} />;
 }
