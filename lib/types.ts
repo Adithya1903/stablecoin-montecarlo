@@ -48,6 +48,14 @@ export type SimulationParams = {
   reserveLiquidity?: number;
   /** Fiat-only: force a confidence event on day 1 regardless of eventProbability. */
   forceDay1Event?: boolean;
+  /** UST-only: fraction of UST supply dumped on day 1 (e.g., 0.05 = 5%). */
+  initialSellPressure?: number;
+  /** UST-only: amplifier — a 1% UST depeg causes this × 1% drop in LUNA price. */
+  reflexivityFactor?: number;
+  /** UST-only: starting LUNA market cap in USD. */
+  lunaStartMarketCap?: number;
+  /** UST-only: UST outstanding in USD. */
+  ustSupplyUsd?: number;
 };
 
 export type SimulationResult = {
@@ -67,6 +75,14 @@ export type SimulationResult = {
   recoveryModeCount?: number;
   /** LUSD-only: mean day of first Recovery Mode entry across paths that entered. */
   recoveryModeAvgDay?: number | null;
+  /** UST-only: parallel LUNA paths (normalized to starting price) + derived paths. */
+  luna?: {
+    paths: number[][];
+    worstPath: number[];
+    medianPath: number[];
+    percentile5Path: number[];
+    percentile95Path: number[];
+  };
 };
 
 // ---------------------------------------------------------------------------

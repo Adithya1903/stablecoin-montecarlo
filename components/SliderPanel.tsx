@@ -95,6 +95,30 @@ const PRESETS: Preset[] = [
       redemptionSeverity: 0.2,
     },
   },
+  {
+    label: "May 7, 2022 (Actual Collapse)",
+    patch: {
+      initialSellPressure: 0.11,
+      reflexivityFactor: 4,
+      lunaStartMarketCap: 30_000_000_000,
+      days: 14,
+    },
+  },
+  {
+    label: "Mild Stress Test",
+    patch: {
+      initialSellPressure: 0.03,
+      reflexivityFactor: 2,
+    },
+  },
+  {
+    label: "What If Larger Reserves?",
+    patch: {
+      initialSellPressure: 0.11,
+      reflexivityFactor: 4,
+      lunaStartMarketCap: 100_000_000_000,
+    },
+  },
 ];
 
 export function SliderPanel({ params, onChange, selectedId }: Props) {
@@ -126,7 +150,49 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
 
       <div className="h-px bg-stroke" />
 
-      {selectedId === "usdc" || selectedId === "usdt" ? (
+      {selectedId === "ust" ? (
+        <>
+          <Slider
+            label="Initial Sell Pressure"
+            value={params.initialSellPressure ?? 0.05}
+            min={0.01}
+            max={0.3}
+            step={0.01}
+            display={pct(params.initialSellPressure ?? 0.05)}
+            subtitle="% of UST supply dumped on day 1. The actual collapse started with ~$2B of sells (~11% of supply)."
+            onChange={(v) => patch({ initialSellPressure: v })}
+          />
+          <Slider
+            label="Reflexivity Factor"
+            value={params.reflexivityFactor ?? 3}
+            min={1}
+            max={10}
+            step={0.5}
+            display={`${(params.reflexivityFactor ?? 3).toFixed(1)}×`}
+            subtitle="How much market panic amplifies the spiral. At 1× LUNA drops proportionally; at 5×+ panic selling accelerates the crash."
+            onChange={(v) => patch({ reflexivityFactor: v })}
+          />
+          <Slider
+            label="LUNA Starting Market Cap"
+            value={params.lunaStartMarketCap ?? 30_000_000_000}
+            min={5_000_000_000}
+            max={50_000_000_000}
+            step={1_000_000_000}
+            display={`$${((params.lunaStartMarketCap ?? 30_000_000_000) / 1_000_000_000).toFixed(0)}B`}
+            subtitle="Pre-collapse LUNA was ~$30B. Does a bigger backing save UST? (Spoiler: the spiral is structural.)"
+            onChange={(v) => patch({ lunaStartMarketCap: v })}
+          />
+          <Slider
+            label="Simulation Days"
+            value={params.days}
+            min={3}
+            max={30}
+            step={1}
+            display={`${params.days} days`}
+            onChange={(v) => patch({ days: Math.round(v) })}
+          />
+        </>
+      ) : selectedId === "usdc" || selectedId === "usdt" ? (
         <>
           <Slider
             label="Event Probability"
@@ -258,7 +324,8 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
         </>
       )}
 
-      {selectedId === "usde" ||
+      {selectedId === "ust" ||
+      selectedId === "usde" ||
       selectedId === "usdc" ||
       selectedId === "usdt" ? null : selectedId === "lusd" ? (
         <>

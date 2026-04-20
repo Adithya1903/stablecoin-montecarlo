@@ -221,6 +221,35 @@ function renderSetup(
     );
   }
 
+  const isUst =
+    p.initialSellPressure !== undefined ||
+    p.reflexivityFactor !== undefined ||
+    p.lunaStartMarketCap !== undefined;
+  if (isUst) {
+    const sell = (p.initialSellPressure ?? 0.05) * 100;
+    const refl = p.reflexivityFactor ?? 3;
+    const cap = p.lunaStartMarketCap ?? 30_000_000_000;
+    paragraphs.push(
+      <p key="ust-1">
+        This simulation demonstrates the <Hi>death spiral</Hi> inherent in
+        algorithmic stablecoins backed only by a sister token. On day 1,{" "}
+        <Hi>{sell.toFixed(0)}%</Hi> of UST supply is dumped into the market,
+        backed by a <Hi>${(cap / 1_000_000_000).toFixed(0)}B</Hi> LUNA float.
+      </p>
+    );
+    paragraphs.push(
+      <p key="ust-2">
+        The <Hi>reflexivity factor</Hi> is the key parameter. At{" "}
+        <Hi>{refl.toFixed(1)}×</Hi>, a 1% UST depeg causes a{" "}
+        <HiAccent tone="bad">{refl.toFixed(1)}%</HiAccent> drop in LUNA.
+        That reduces UST&apos;s backing, deepening the depeg, which drops
+        LUNA further — a self-reinforcing loop with no external collateral
+        to break it.
+      </p>
+    );
+    return paragraphs;
+  }
+
   const isUsde =
     p.fundingRateVol !== undefined ||
     p.reserveFund !== undefined ||
@@ -394,6 +423,46 @@ function renderOutcome(
   liqPrice: number,
   buffer: number
 ) {
+  const isUstOutcome =
+    p.initialSellPressure !== undefined ||
+    p.reflexivityFactor !== undefined ||
+    p.lunaStartMarketCap !== undefined;
+  if (isUstOutcome) {
+    const total = result.paths.length;
+    const count = result.depegCount;
+    const pct = result.depegProbability * 100;
+    let daysSum = 0;
+    let daysCount = 0;
+    for (const d of result.depegDays) {
+      if (d !== null) {
+        daysSum += d;
+        daysCount++;
+      }
+    }
+    const avgDay = daysCount > 0 ? daysSum / daysCount : null;
+    return (
+      <>
+        <p>
+          <HiAccent tone="bad">Full collapse</HiAccent> (UST &lt; $0.50)
+          occurred in <Hi>{count.toLocaleString()}</Hi> of{" "}
+          <Hi>{total.toLocaleString()}</Hi> paths (<Hi>{pct.toFixed(1)}%</Hi>)
+          {avgDay !== null && (
+            <>
+              , on average around <Hi>day {avgDay.toFixed(1)}</Hi>
+            </>
+          )}
+          . Once the mint-and-dump loop starts, UST&apos;s backing evaporates
+          faster than arbitrageurs can defend it.
+        </p>
+        <p>
+          In the actual May 2022 collapse, LUNA went from ~$80 to $0.0001 in
+          3 days. UST went from $1.00 to $0.02. Approximately{" "}
+          <Hi>$40 billion</Hi> of value was destroyed.
+        </p>
+      </>
+    );
+  }
+
   const isFiatOutcome =
     p.eventProbability !== undefined ||
     p.baseLiquidity !== undefined ||
@@ -630,6 +699,26 @@ function renderSuggestions(
   _result: SimulationResult,
   buffer: number
 ): React.ReactNode[] {
+  const isUst =
+    p.initialSellPressure !== undefined ||
+    p.reflexivityFactor !== undefined ||
+    p.lunaStartMarketCap !== undefined;
+  if (isUst) {
+    return [
+      <p key="ust-1">
+        Every serious stablecoin launched after May 2022 uses{" "}
+        <Hi>external collateral</Hi> (real dollars, real ETH/BTC, or hedged
+        positions). Pure algorithmic stablecoins are effectively extinct —
+        the loop has no fix, only a larger or smaller starting buffer.
+      </p>,
+      <p key="ust-2">
+        Even doubling or tripling LUNA&apos;s market cap only delays the
+        collapse by a day or two. The spiral is structural, not a reserves
+        problem.
+      </p>,
+    ];
+  }
+
   const isFiat =
     p.eventProbability !== undefined ||
     p.baseLiquidity !== undefined ||

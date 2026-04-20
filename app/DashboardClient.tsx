@@ -13,6 +13,7 @@ import {
   simulateLUSD,
   simulateOvercollateralizedBTC,
   simulateUSDe,
+  simulateUST,
 } from "@/lib/montecarlo";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
@@ -94,6 +95,7 @@ export function DashboardClient({
   const btcBacked = isBtcBacked(selected);
   const isUsde = selectedId === "usde";
   const isFiat = selectedId === "usdc" || selectedId === "usdt";
+  const isUst = selectedId === "ust";
   const underlyingPrice = btcBacked ? btcPrice : ethPrice;
   const underlyingLabel = btcBacked ? "BTC" : "ETH";
 
@@ -152,6 +154,20 @@ export function DashboardClient({
                   ? (prev.totalSupply ?? 3_000_000_000)
                   : undefined,
             }),
+      ...(coin.id === "ust"
+        ? {
+            initialSellPressure: prev.initialSellPressure ?? 0.05,
+            reflexivityFactor: prev.reflexivityFactor ?? 3.0,
+            lunaStartMarketCap: prev.lunaStartMarketCap ?? 30_000_000_000,
+            ustSupplyUsd: prev.ustSupplyUsd ?? 18_000_000_000,
+            days: 14,
+          }
+        : {
+            initialSellPressure: undefined,
+            reflexivityFactor: undefined,
+            lunaStartMarketCap: undefined,
+            ustSupplyUsd: undefined,
+          }),
     }));
   };
 
@@ -169,6 +185,7 @@ export function DashboardClient({
     if (
       !isUsde &&
       !isFiat &&
+      !isUst &&
       (!Number.isFinite(underlyingPrice) || underlyingPrice <= 0)
     ) {
       setError(`Invalid ${underlyingLabel} price: ${underlyingPrice}`);
@@ -178,6 +195,7 @@ export function DashboardClient({
     if (
       !isUsde &&
       !isFiat &&
+      !isUst &&
       selectedId !== "lusd" &&
       params.liquidationThreshold >= params.collateralRatio
     ) {
@@ -194,7 +212,9 @@ export function DashboardClient({
       try {
         console.log("[sim] start", { coin: selectedId, underlyingPrice, params });
         const t0 = performance.now();
-        const result = isUsde
+        const result = isUst
+          ? simulateUST(params)
+          : isUsde
           ? simulateUSDe(params)
           : isFiat
             ? simulateFiatBacked(params)
@@ -233,6 +253,7 @@ export function DashboardClient({
     btcBacked,
     isUsde,
     isFiat,
+    isUst,
     ethPrice,
     btcPrice,
     selectedId,
@@ -265,6 +286,18 @@ export function DashboardClient({
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
+      {isUst && (
+        <div className="mb-6 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-200">
+          <p className="font-semibold text-red-300">
+            ⚠️ COLLAPSED — May 2022. ~$40 billion destroyed in 3 days.
+          </p>
+          <p className="mt-1 text-red-200/80">
+            This is an educational simulation showing why purely algorithmic
+            stablecoins fail. This mechanism has a 100% historical failure
+            rate.
+          </p>
+        </div>
+      )}
       <header className="mb-8 border-b border-stroke pb-6">
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted">
           Monte Carlo
@@ -280,7 +313,28 @@ export function DashboardClient({
           threshold. Red paths breached liquidation; blue paths survived.
         </p>
         <div className="mt-4 flex flex-wrap gap-6 font-mono text-xs text-muted">
-          {isFiat ? (
+          {isUst ? (
+            <>
+              <div>
+                UST supply:{" "}
+                <span className="text-cream">
+                  {formatUsdCompact(params.ustSupplyUsd ?? 18_000_000_000)}
+                </span>
+              </div>
+              <div>
+                LUNA cap:{" "}
+                <span className="text-cream">
+                  {formatUsdCompact(params.lunaStartMarketCap ?? 30_000_000_000)}
+                </span>
+              </div>
+              <div>
+                Reflexivity:{" "}
+                <span className="text-cream">
+                  {(params.reflexivityFactor ?? 3).toFixed(1)}×
+                </span>
+              </div>
+            </>
+          ) : isFiat ? (
             <>
               <div>
                 Supply:{" "}
@@ -372,7 +426,7 @@ export function DashboardClient({
                 currentPrice={
                   isUsde
                     ? (run.params.reserveFund ?? 50_000_000)
-                    : isFiat
+                    : isFiat || isUst
                       ? 1.0
                       : underlyingPrice
                 }
@@ -380,23 +434,48 @@ export function DashboardClient({
                 collateralRatio={run.params.collateralRatio}
                 elapsedMs={run.elapsedMs}
                 thresholdOverride={
-                  isUsde ? 0 : isFiat ? 0.97 : undefined
+                  isUsde ? 0 : isFiat ? 0.97 : isUst ? 0.5 : undefined
                 }
                 thresholdLabel={
                   isUsde
                     ? "reserve depleted"
                     : isFiat
                       ? "depeg $0.97"
-                      : undefined
+                      : isUst
+                        ? "full collapse $0.50"
+                        : undefined
                 }
                 formatValue={
                   isUsde
                     ? formatUsdCompact
                     : isFiat
                       ? (n) => `$${n.toFixed(3)}`
-                      : undefined
+                      : isUst
+                        ? (n) => `$${n.toFixed(2)}`
+                        : undefined
                 }
               />
+              {isUst && run.result.luna && (
+                <SimulationChart
+                  result={{
+                    paths: run.result.luna.paths,
+                    depegCount: 0,
+                    depegProbability: 0,
+                    depegDays: run.result.depegDays,
+                    worstPath: run.result.luna.worstPath,
+                    medianPath: run.result.luna.medianPath,
+                    percentile5Path: run.result.luna.percentile5Path,
+                    percentile95Path: run.result.luna.percentile95Path,
+                  }}
+                  currentPrice={1.0}
+                  liquidationThreshold={run.params.liquidationThreshold}
+                  collateralRatio={run.params.collateralRatio}
+                  elapsedMs={run.elapsedMs}
+                  thresholdOverride={0.01}
+                  thresholdLabel="LUNA → 0"
+                  formatValue={(n) => `${(n * 100).toFixed(1)}%`}
+                />
+              )}
               <ResultsPanel
                 result={run.result}
                 currentPrice={underlyingPrice}

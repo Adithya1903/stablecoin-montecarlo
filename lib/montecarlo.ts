@@ -599,6 +599,122 @@ export function simulateGHO(
 }
 
 /**
+ * UST algorithmic death-spiral sim (EDUCATIONAL ONLY — collapsed May 2022).
+ *
+ * Reflexive mint/burn between UST and LUNA with no external collateral.
+ * Day 1: initial sell pressure drops UST. Subsequent days: arbitrageurs
+ * redeem cheap UST for $1 of LUNA, minting new LUNA. Dilution drops LUNA
+ * price, panic (reflexivity) amplifies the drop, and UST's backing
+ * shrinks — a self-reinforcing loop. Paths return UST price; `luna.paths`
+ * contains LUNA price normalized to its starting value.
+ */
+export function simulateUST(params: SimulationParams): SimulationResult {
+  const days = params.days;
+  const numSimulations = params.numSimulations;
+  const initialSellPressure = params.initialSellPressure ?? 0.05;
+  const reflexivity = params.reflexivityFactor ?? 3.0;
+  const lunaMarketCap = params.lunaStartMarketCap ?? 30_000_000_000;
+  const ustSupply = params.ustSupplyUsd ?? 18_000_000_000;
+  const FULL_COLLAPSE = 0.5;
+
+  // Pre-collapse LUNA supply ~350M; the absolute value cancels out for the
+  // normalized luna chart but drives the dilution dynamic in absolute terms.
+  const lunaSupply0 = 350_000_000;
+  const lunaPrice0 = lunaMarketCap / lunaSupply0;
+
+  const pathLen = days + 1;
+  const paths: number[][] = new Array(numSimulations);
+  const lunaPaths: number[][] = new Array(numSimulations);
+  const depegDays: (number | null)[] = new Array(numSimulations);
+  let depegCount = 0;
+
+  for (let i = 0; i < numSimulations; i++) {
+    const ust = new Array<number>(pathLen);
+    const luna = new Array<number>(pathLen);
+    ust[0] = 1.0;
+    luna[0] = 1.0;
+    let ustPrice = 1.0;
+    let lunaPrice = lunaPrice0;
+    let lunaSupply = lunaSupply0;
+    let firstDepeg: number | null = null;
+
+    for (let d = 1; d <= days; d++) {
+      if (d === 1) {
+        const sellAmount = ustSupply * initialSellPressure;
+        const impact = sellAmount / (ustSupply * 0.1); // 10% depth
+        ustPrice = Math.max(0.01, 1.0 - impact + randomNormal(0, 0.02));
+      } else {
+        if (ustPrice < 1.0) {
+          const redeemAmount = (1.0 - ustPrice) * ustSupply * 0.05;
+          const newLunaMinted = redeemAmount / Math.max(0.001, lunaPrice);
+          lunaSupply += newLunaMinted;
+          lunaPrice = lunaMarketCap / lunaSupply;
+          lunaPrice *= 1 - reflexivity * (1.0 - ustPrice);
+          if (lunaPrice < 0.001) lunaPrice = 0.001;
+        }
+        const ustBacking = lunaPrice * lunaSupply;
+        ustPrice = Math.min(
+          1.0,
+          ustBacking / ustSupply + randomNormal(0, 0.01)
+        );
+        if (ustPrice < 0.001) ustPrice = 0.001;
+      }
+
+      ust[d] = ustPrice;
+      luna[d] = lunaPrice / lunaPrice0;
+      if (firstDepeg === null && ustPrice < FULL_COLLAPSE) firstDepeg = d;
+    }
+
+    paths[i] = ust;
+    lunaPaths[i] = luna;
+    depegDays[i] = firstDepeg;
+    if (firstDepeg !== null) depegCount++;
+  }
+
+  const computePercentiles = (src: number[][]) => {
+    const med = new Array<number>(pathLen);
+    const p5 = new Array<number>(pathLen);
+    const p95 = new Array<number>(pathLen);
+    const column = new Array<number>(numSimulations);
+    for (let d = 0; d < pathLen; d++) {
+      for (let i = 0; i < numSimulations; i++) column[i] = src[i][d];
+      const sorted = column.slice().sort((a, b) => a - b);
+      p5[d] = quantile(sorted, 0.05);
+      med[d] = quantile(sorted, 0.5);
+      p95[d] = quantile(sorted, 0.95);
+    }
+    return { med, p5, p95 };
+  };
+
+  const ustQ = computePercentiles(paths);
+  const lunaQ = computePercentiles(lunaPaths);
+
+  // Worst = lowest UST final price; use same index for LUNA for coherence.
+  let worstIdx = 0;
+  for (let i = 1; i < numSimulations; i++) {
+    if (paths[i][days] < paths[worstIdx][days]) worstIdx = i;
+  }
+
+  return {
+    paths,
+    depegCount,
+    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegDays,
+    worstPath: paths[worstIdx],
+    medianPath: ustQ.med,
+    percentile5Path: ustQ.p5,
+    percentile95Path: ustQ.p95,
+    luna: {
+      paths: lunaPaths,
+      worstPath: lunaPaths[worstIdx],
+      medianPath: lunaQ.med,
+      percentile5Path: lunaQ.p5,
+      percentile95Path: lunaQ.p95,
+    },
+  };
+}
+
+/**
  * Overcollateralized BTC-backed sim. When `lstBasisRisk` is false this is
  * identical to `simulatePaths`. When true, a second correlated RV is
  * simulated: the stBTC/BTC exchange rate. Effective collateral per day is
