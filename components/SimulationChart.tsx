@@ -11,6 +11,12 @@ type Props = {
   /** Ratio form, e.g. 1.5 = 150% */
   collateralRatio: number;
   elapsedMs: number | null;
+  /** Override the computed threshold line (USDe passes 0 = reserve depletion). */
+  thresholdOverride?: number;
+  /** Label next to the threshold line (default "liq $X"). */
+  thresholdLabel?: string;
+  /** Formats axis numbers. Default: whole dollars. */
+  formatValue?: (n: number) => string;
 };
 
 export function SimulationChart({
@@ -19,12 +25,20 @@ export function SimulationChart({
   liquidationThreshold,
   collateralRatio,
   elapsedMs,
+  thresholdOverride,
+  thresholdLabel,
+  formatValue,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  const liqPrice = currentPrice * (liquidationThreshold / collateralRatio);
+  const liqPrice =
+    thresholdOverride !== undefined
+      ? thresholdOverride
+      : currentPrice * (liquidationThreshold / collateralRatio);
+  const fmt = formatValue ?? ((n: number) => `$${n.toFixed(0)}`);
+  const threshLabel = thresholdLabel ?? `liq ${fmt(liqPrice)}`;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,9 +65,11 @@ export function SimulationChart({
       liqPrice,
       dpr,
       cssWidth,
-      cssHeight
+      cssHeight,
+      fmt,
+      threshLabel
     );
-  }, [result, currentPrice, liqPrice]);
+  }, [result, currentPrice, liqPrice, fmt, threshLabel]);
 
   return (
     <div className="space-y-4">
@@ -147,7 +163,9 @@ function drawOverlay(
   liqPrice: number,
   dpr: number,
   cssWidth: number,
-  cssHeight: number
+  cssHeight: number,
+  fmt: (n: number) => string,
+  threshLabel: string
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -187,14 +205,14 @@ function drawOverlay(
 
   ctx.fillStyle = "#F87171";
   ctx.font = "11px ui-monospace, SFMono-Regular, monospace";
-  ctx.fillText(`liq $${liqPrice.toFixed(0)}`, 6, y - 4);
+  ctx.fillText(threshLabel, 6, y - 4);
   ctx.fillStyle = "#F5F3EE";
   ctx.fillText(`median`, W - 54, yOf(result.medianPath[days]) - 4);
 
   ctx.fillStyle = "#A8A29E";
   ctx.font = "10px ui-monospace, SFMono-Regular, monospace";
-  ctx.fillText(`$${max.toFixed(0)}`, 6, 12);
-  ctx.fillText(`$${min.toFixed(0)}`, 6, H - 6);
+  ctx.fillText(fmt(max), 6, 12);
+  ctx.fillText(fmt(min), 6, H - 6);
   ctx.fillText(`day 0`, 6, H - 20);
   ctx.fillText(`day ${days}`, W - 48, H - 6);
 }

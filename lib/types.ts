@@ -28,6 +28,16 @@ export type SimulationParams = {
   systemCR?: number;
   /** GHO-only: pairwise correlation between ETH/BTC/LINK returns (0..1). */
   correlation?: number;
+  /** USDe-only: daily funding-rate volatility (e.g., 0.02 = 2%). */
+  fundingRateVol?: number;
+  /** USDe-only: forced day-1 annualized funding shock (e.g., -0.3 = -30% apr). */
+  fundingRateShock?: number;
+  /** USDe-only: starting reserve fund in USD. */
+  reserveFund?: number;
+  /** USDe-only: USDe outstanding in USD. */
+  totalSupply?: number;
+  /** USDe-only: mean daily funding rate (e.g., 0.0001). Usually derived from history. */
+  fundingMeanDaily?: number;
 };
 
 export type SimulationResult = {

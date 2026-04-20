@@ -156,7 +156,7 @@ interface BinanceFundingRateEntry {
 
 export async function fetchEthFundingRates(): Promise<FundingRateStats> {
   const raw = await fetchJson<BinanceFundingRateEntry[]>(
-    "https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=100"
+    "https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=500"
   );
   const rates = raw.map((r) => ({
     fundingTime: r.fundingTime,

@@ -301,6 +301,82 @@ export function simulateLUSD(
 }
 
 /**
+ * USDe sim. Ethena's delta-neutral model cancels price moves out — the
+ * risk is funding rates. When funding is positive, shorts earn; when
+ * negative, shorts PAY and the reserve fund drains. Reserve hitting 0
+ * is the depeg event. Paths record reserve balance over time (USD), so
+ * downstream UI treats the "price" axis as dollars of reserve.
+ */
+export function simulateUSDe(params: SimulationParams): SimulationResult {
+  const days = params.days;
+  const numSimulations = params.numSimulations;
+  const fundingVol = params.fundingRateVol ?? 0.02;
+  const shockApr = params.fundingRateShock ?? 0;
+  const startReserve = params.reserveFund ?? 50_000_000;
+  const totalSupply = params.totalSupply ?? 3_000_000_000;
+  const meanDaily = params.fundingMeanDaily ?? 0.0001;
+
+  const pathLen = days + 1;
+  const paths: number[][] = new Array(numSimulations);
+  const depegDays: (number | null)[] = new Array(numSimulations);
+  const finalReserve = new Float64Array(numSimulations);
+  let depegCount = 0;
+
+  for (let i = 0; i < numSimulations; i++) {
+    const path = new Array<number>(pathLen);
+    path[0] = startReserve;
+    let reserve = startReserve;
+    let firstDepeg: number | null = null;
+
+    for (let d = 1; d <= days; d++) {
+      const dailyRate =
+        d === 1 && shockApr !== 0
+          ? shockApr / 365
+          : randomNormal(meanDaily, fundingVol);
+      reserve += totalSupply * dailyRate;
+      if (reserve <= 0) {
+        if (firstDepeg === null) firstDepeg = d;
+        reserve = 0;
+      }
+      path[d] = reserve;
+    }
+
+    paths[i] = path;
+    depegDays[i] = firstDepeg;
+    finalReserve[i] = path[days];
+    if (firstDepeg !== null) depegCount++;
+  }
+
+  const medianPath = new Array<number>(pathLen);
+  const percentile5Path = new Array<number>(pathLen);
+  const percentile95Path = new Array<number>(pathLen);
+  const column = new Array<number>(numSimulations);
+  for (let d = 0; d < pathLen; d++) {
+    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
+    const sorted = column.slice().sort((a, b) => a - b);
+    percentile5Path[d] = quantile(sorted, 0.05);
+    medianPath[d] = quantile(sorted, 0.5);
+    percentile95Path[d] = quantile(sorted, 0.95);
+  }
+
+  let worstIdx = 0;
+  for (let i = 1; i < numSimulations; i++) {
+    if (finalReserve[i] < finalReserve[worstIdx]) worstIdx = i;
+  }
+
+  return {
+    paths,
+    depegCount,
+    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegDays,
+    worstPath: paths[worstIdx],
+    medianPath,
+    percentile5Path,
+    percentile95Path,
+  };
+}
+
+/**
  * GHO sim. Multi-collateral basket (50% ETH, 30% BTC, 20% LINK) with a
  * correlated-returns engine. The correlation slider sets the pairwise
  * correlation for a 3×3 matrix with 1s on the diagonal; we take the

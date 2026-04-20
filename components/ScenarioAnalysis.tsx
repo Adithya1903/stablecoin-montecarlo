@@ -221,6 +221,41 @@ function renderSetup(
     );
   }
 
+  const isUsde =
+    p.fundingRateVol !== undefined ||
+    p.reserveFund !== undefined ||
+    p.fundingRateShock !== undefined;
+  if (isUsde) {
+    const reserve = p.reserveFund ?? 50_000_000;
+    const shock = p.fundingRateShock ?? 0;
+    const vol = (p.fundingRateVol ?? 0.02) * 100;
+    paragraphs.push(
+      <p key="usde-1">
+        Unlike overcollateralized stablecoins, USDe&apos;s risk is <Hi>not</Hi>{" "}
+        about collateral price drops. Ethena holds equal long spot and short
+        perps positions, so price moves cancel out.
+      </p>
+    );
+    paragraphs.push(
+      <p key="usde-2">
+        The risk is <Hi>funding rates going negative</Hi>. When the market
+        turns bearish, short positions PAY instead of earning. Ethena&apos;s{" "}
+        <Hi>${(reserve / 1_000_000).toFixed(0)}M</Hi> reserve fund absorbs
+        these costs at <Hi>{vol.toFixed(1)}%</Hi> daily funding-rate vol
+        {shock < 0 ? (
+          <>
+            {" "}
+            with a forced day-1 shock of{" "}
+            <HiAccent tone="bad">{(shock * 100).toFixed(0)}% APR</HiAccent>.
+          </>
+        ) : (
+          <>.</>
+        )}
+      </p>
+    );
+    return paragraphs;
+  }
+
   const corr = p.correlation;
   if (corr !== undefined) {
     if (corr <= 0.3) {
@@ -359,6 +394,46 @@ function renderOutcome(
   liqPrice: number,
   buffer: number
 ) {
+  const isUsdeOutcome =
+    p.fundingRateVol !== undefined ||
+    p.reserveFund !== undefined ||
+    p.fundingRateShock !== undefined;
+  if (isUsdeOutcome) {
+    const total = result.paths.length;
+    const count = result.depegCount;
+    const pct = result.depegProbability * 100;
+    let daysSum = 0;
+    let daysCount = 0;
+    for (const d of result.depegDays) {
+      if (d !== null) {
+        daysSum += d;
+        daysCount++;
+      }
+    }
+    const avgDay = daysCount > 0 ? daysSum / daysCount : null;
+    if (count === 0) {
+      return (
+        <p>
+          Across <Hi>{total.toLocaleString()}</Hi> paths, the reserve fund{" "}
+          <HiAccent tone="good">never ran out</HiAccent>. Funding-rate
+          fluctuations at the current settings are absorbed by the insurance
+          buffer.
+        </p>
+      );
+    }
+    const tone = pct < 5 ? "warn" : "bad";
+    return (
+      <p>
+        The reserve fund was <HiAccent tone={tone}>depleted</HiAccent> in{" "}
+        <Hi>{count.toLocaleString()}</Hi> of{" "}
+        <Hi>{total.toLocaleString()}</Hi> paths (<Hi>{pct.toFixed(1)}%</Hi>),
+        on average around <Hi>day {avgDay?.toFixed(1)}</Hi>. At this point
+        Ethena can no longer sustain the delta-neutral hedge and USDe faces
+        depeg risk.
+      </p>
+    );
+  }
+
   const total = result.paths.length;
   const count = result.depegCount;
   const pct = result.depegProbability * 100;
@@ -520,6 +595,30 @@ function renderSuggestions(
   _result: SimulationResult,
   buffer: number
 ): React.ReactNode[] {
+  const isUsde =
+    p.fundingRateVol !== undefined ||
+    p.reserveFund !== undefined ||
+    p.fundingRateShock !== undefined;
+  if (isUsde) {
+    const reserve = p.reserveFund ?? 50_000_000;
+    return [
+      <ul key="list" className="list-disc space-y-2 pl-5">
+        <li key="res">
+          Growing the reserve fund beyond{" "}
+          <Hi>${(reserve / 1_000_000).toFixed(0)}M</Hi> buys more days of
+          negative funding before depletion.
+        </li>
+        <li key="sup">
+          A smaller <Hi>USDe supply</Hi> means each basis point of negative
+          funding costs less in absolute dollars.
+        </li>
+        <li key="vol">
+          Lower funding-rate vol (tighter market regime) reduces the chance
+          of extended negative stretches.
+        </li>
+      </ul>,
+    ];
+  }
   const suggestions: React.ReactNode[] = [];
 
   if (p.collateralRatio < 2.0) {

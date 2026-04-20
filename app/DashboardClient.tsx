@@ -11,6 +11,7 @@ import {
   simulateGHO,
   simulateLUSD,
   simulateOvercollateralizedBTC,
+  simulateUSDe,
 } from "@/lib/montecarlo";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
@@ -49,6 +50,13 @@ function lstWeights(
   return { btc: btc.weight, stBtc: stBtc.weight };
 }
 
+function formatUsdCompact(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
 function validateResult(r: SimulationResult): string | null {
   if (!(r.depegProbability >= 0 && r.depegProbability <= 1)) {
     return `depegProbability out of range: ${r.depegProbability}`;
@@ -70,15 +78,20 @@ export function DashboardClient({
   btcPrice,
   summaries = {},
   fetchError = null,
+  fundingMeanDaily = 0.0001,
+  fundingVolDaily = 0.02,
 }: {
   ethPrice: number;
   btcPrice: number;
   summaries?: Record<string, Summary>;
   fetchError?: string | null;
+  fundingMeanDaily?: number;
+  fundingVolDaily?: number;
 }) {
   const [selectedId, setSelectedId] = useState<string>("dai");
   const selected = getStablecoin(selectedId);
   const btcBacked = isBtcBacked(selected);
+  const isUsde = selectedId === "usde";
   const underlyingPrice = btcBacked ? btcPrice : ethPrice;
   const underlyingLabel = btcBacked ? "BTC" : "ETH";
 
@@ -98,6 +111,18 @@ export function DashboardClient({
       userCR: coin.id === "lusd" ? (prev.userCR ?? 1.5) : undefined,
       systemCR: coin.id === "lusd" ? (prev.systemCR ?? 2.5) : undefined,
       correlation: coin.id === "gho" ? (prev.correlation ?? 0.7) : undefined,
+      fundingRateVol:
+        coin.id === "usde" ? (prev.fundingRateVol ?? fundingVolDaily) : undefined,
+      fundingRateShock:
+        coin.id === "usde" ? (prev.fundingRateShock ?? 0) : undefined,
+      reserveFund:
+        coin.id === "usde" ? (prev.reserveFund ?? 50_000_000) : undefined,
+      totalSupply:
+        coin.id === "usde" ? (prev.totalSupply ?? 3_000_000_000) : undefined,
+      fundingMeanDaily:
+        coin.id === "usde"
+          ? (prev.fundingMeanDaily ?? fundingMeanDaily)
+          : undefined,
     }));
   };
 
@@ -112,12 +137,16 @@ export function DashboardClient({
       setPending(false);
       return;
     }
-    if (!Number.isFinite(underlyingPrice) || underlyingPrice <= 0) {
+    if (
+      !isUsde &&
+      (!Number.isFinite(underlyingPrice) || underlyingPrice <= 0)
+    ) {
       setError(`Invalid ${underlyingLabel} price: ${underlyingPrice}`);
       setPending(false);
       return;
     }
     if (
+      !isUsde &&
       selectedId !== "lusd" &&
       params.liquidationThreshold >= params.collateralRatio
     ) {
@@ -134,13 +163,15 @@ export function DashboardClient({
       try {
         console.log("[sim] start", { coin: selectedId, underlyingPrice, params });
         const t0 = performance.now();
-        const result = btcBacked
-          ? simulateOvercollateralizedBTC(underlyingPrice, params)
-          : selectedId === "lusd"
-            ? simulateLUSD(underlyingPrice, params)
-            : selectedId === "gho"
-              ? simulateGHO(ethPrice, btcPrice, params)
-              : simulateDAI(underlyingPrice, params);
+        const result = isUsde
+          ? simulateUSDe(params)
+          : btcBacked
+            ? simulateOvercollateralizedBTC(underlyingPrice, params)
+            : selectedId === "lusd"
+              ? simulateLUSD(underlyingPrice, params)
+              : selectedId === "gho"
+                ? simulateGHO(ethPrice, btcPrice, params)
+                : simulateDAI(underlyingPrice, params);
         const t1 = performance.now();
         const bad = validateResult(result);
         if (bad) {
@@ -163,7 +194,17 @@ export function DashboardClient({
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [underlyingPrice, underlyingLabel, btcBacked, selectedId, params, fetchError]);
+  }, [
+    underlyingPrice,
+    underlyingLabel,
+    btcBacked,
+    isUsde,
+    ethPrice,
+    btcPrice,
+    selectedId,
+    params,
+    fetchError,
+  ]);
 
   const isLusd = selectedId === "lusd";
   const liqPrice = useMemo(() => {
@@ -205,18 +246,48 @@ export function DashboardClient({
           threshold. Red paths breached liquidation; blue paths survived.
         </p>
         <div className="mt-4 flex flex-wrap gap-6 font-mono text-xs text-muted">
-          <div>
-            {underlyingLabel} spot:{" "}
-            <span className="text-cream">${underlyingPrice.toFixed(2)}</span>
-          </div>
-          <div>
-            Liquidation price:{" "}
-            <span className="text-red-400">${liqPrice.toFixed(0)}</span>
-          </div>
-          <div>
-            Buffer:{" "}
-            <span className="text-cream">{buffer.toFixed(1)}%</span>
-          </div>
+          {isUsde ? (
+            <>
+              <div>
+                Reserve:{" "}
+                <span className="text-cream">
+                  {formatUsdCompact(params.reserveFund ?? 50_000_000)}
+                </span>
+              </div>
+              <div>
+                Daily funding rate:{" "}
+                <span className="text-cream">
+                  {(
+                    (params.fundingMeanDaily ?? fundingMeanDaily) * 100
+                  ).toFixed(3)}
+                  %
+                </span>
+              </div>
+              <div>
+                Supply:{" "}
+                <span className="text-cream">
+                  {formatUsdCompact(params.totalSupply ?? 3_000_000_000)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                {underlyingLabel} spot:{" "}
+                <span className="text-cream">
+                  ${underlyingPrice.toFixed(2)}
+                </span>
+              </div>
+              <div>
+                Liquidation price:{" "}
+                <span className="text-red-400">${liqPrice.toFixed(0)}</span>
+              </div>
+              <div>
+                Buffer:{" "}
+                <span className="text-cream">{buffer.toFixed(1)}%</span>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
@@ -238,10 +309,17 @@ export function DashboardClient({
             <>
               <SimulationChart
                 result={run.result}
-                currentPrice={underlyingPrice}
+                currentPrice={
+                  isUsde
+                    ? (run.params.reserveFund ?? 50_000_000)
+                    : underlyingPrice
+                }
                 liquidationThreshold={run.params.liquidationThreshold}
                 collateralRatio={run.params.collateralRatio}
                 elapsedMs={run.elapsedMs}
+                thresholdOverride={isUsde ? 0 : undefined}
+                thresholdLabel={isUsde ? "reserve depleted" : undefined}
+                formatValue={isUsde ? formatUsdCompact : undefined}
               />
               <ResultsPanel
                 result={run.result}

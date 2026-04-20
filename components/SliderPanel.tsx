@@ -51,6 +51,30 @@ const PRESETS: Preset[] = [
     label: "Diversified",
     patch: { volatility: 0.04, initialCrash: 0, correlation: 0.3 },
   },
+  {
+    label: "Normal Bull Market",
+    patch: {
+      fundingRateVol: 0.01,
+      fundingRateShock: 0,
+      reserveFund: 50_000_000,
+    },
+  },
+  {
+    label: "Bear Market",
+    patch: {
+      fundingRateVol: 0.03,
+      fundingRateShock: -0.15,
+      reserveFund: 50_000_000,
+    },
+  },
+  {
+    label: "Extreme Stress",
+    patch: {
+      fundingRateVol: 0.05,
+      fundingRateShock: -0.3,
+      reserveFund: 30_000_000,
+    },
+  },
 ];
 
 export function SliderPanel({ params, onChange, selectedId }: Props) {
@@ -82,39 +106,89 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
 
       <div className="h-px bg-stroke" />
 
-      <Slider
-        label="ETH Volatility"
-        value={params.volatility}
-        min={0.01}
-        max={0.15}
-        step={0.005}
-        display={pct(params.volatility)}
-        subtitle="Historical average is ~4%. Doubles during market panics."
-        onChange={(v) => patch({ volatility: v })}
-      />
+      {selectedId === "usde" ? (
+        <>
+          <Slider
+            label="Funding Rate Volatility"
+            value={params.fundingRateVol ?? 0.02}
+            min={0.005}
+            max={0.1}
+            step={0.005}
+            display={pct(params.fundingRateVol ?? 0.02)}
+            subtitle="How much the daily funding rate swings. Higher during volatile markets."
+            onChange={(v) => patch({ fundingRateVol: v })}
+          />
+          <Slider
+            label="Day 1 Funding Shock"
+            value={-(params.fundingRateShock ?? 0)}
+            min={0}
+            max={0.5}
+            step={0.01}
+            display={
+              (params.fundingRateShock ?? 0) === 0
+                ? "0%"
+                : `${((params.fundingRateShock ?? 0) * 100).toFixed(0)}% APR`
+            }
+            subtitle="Force funding negative on day 1, annualized. -30% APR ≈ severe bear market."
+            onChange={(v) => patch({ fundingRateShock: v === 0 ? 0 : -v })}
+          />
+          <Slider
+            label="Reserve Fund"
+            value={params.reserveFund ?? 50_000_000}
+            min={10_000_000}
+            max={200_000_000}
+            step={5_000_000}
+            display={`$${((params.reserveFund ?? 50_000_000) / 1_000_000).toFixed(0)}M`}
+            subtitle="Ethena's insurance fund. Drains during negative funding."
+            onChange={(v) => patch({ reserveFund: v })}
+          />
+          <Slider
+            label="Simulation Days"
+            value={params.days}
+            min={7}
+            max={180}
+            step={1}
+            display={`${params.days} days`}
+            onChange={(v) => patch({ days: Math.round(v) })}
+          />
+        </>
+      ) : (
+        <>
+          <Slider
+            label="ETH Volatility"
+            value={params.volatility}
+            min={0.01}
+            max={0.15}
+            step={0.005}
+            display={pct(params.volatility)}
+            subtitle="Historical average is ~4%. Doubles during market panics."
+            onChange={(v) => patch({ volatility: v })}
+          />
 
-      <Slider
-        label="Day 1 Crash"
-        value={-params.initialCrash}
-        min={0}
-        max={0.6}
-        step={0.05}
-        display={signedPct(params.initialCrash)}
-        subtitle="Force a crash on the first day. -50% = Black Thursday."
-        onChange={(v) => patch({ initialCrash: -v })}
-      />
+          <Slider
+            label="Day 1 Crash"
+            value={-params.initialCrash}
+            min={0}
+            max={0.6}
+            step={0.05}
+            display={signedPct(params.initialCrash)}
+            subtitle="Force a crash on the first day. -50% = Black Thursday."
+            onChange={(v) => patch({ initialCrash: -v })}
+          />
 
-      <Slider
-        label="Simulation Days"
-        value={params.days}
-        min={7}
-        max={90}
-        step={1}
-        display={`${params.days} days`}
-        onChange={(v) => patch({ days: Math.round(v) })}
-      />
+          <Slider
+            label="Simulation Days"
+            value={params.days}
+            min={7}
+            max={90}
+            step={1}
+            display={`${params.days} days`}
+            onChange={(v) => patch({ days: Math.round(v) })}
+          />
+        </>
+      )}
 
-      {selectedId === "lusd" ? (
+      {selectedId === "usde" ? null : selectedId === "lusd" ? (
         <>
           <Slider
             label="Your CR"
