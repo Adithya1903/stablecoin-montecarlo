@@ -38,6 +38,16 @@ export type SimulationParams = {
   totalSupply?: number;
   /** USDe-only: mean daily funding rate (e.g., 0.0001). Usually derived from history. */
   fundingMeanDaily?: number;
+  /** Fiat-only: daily prob of a confidence event (bank/reg/audit). */
+  eventProbability?: number;
+  /** Fiat-only: fraction of supply that redeems during an event. */
+  redemptionSeverity?: number;
+  /** Fiat-only: weighted-avg liquidity factor of the reserve basket (0..1). */
+  baseLiquidity?: number;
+  /** Fiat-only: scalar multiplier on baseLiquidity (stress of banking rails). */
+  reserveLiquidity?: number;
+  /** Fiat-only: force a confidence event on day 1 regardless of eventProbability. */
+  forceDay1Event?: boolean;
 };
 
 export type SimulationResult = {

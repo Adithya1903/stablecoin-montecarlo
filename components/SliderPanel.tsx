@@ -75,6 +75,26 @@ const PRESETS: Preset[] = [
       reserveFund: 30_000_000,
     },
   },
+  {
+    label: "Normal Operations",
+    patch: { forceDay1Event: false, reserveLiquidity: 1.0 },
+  },
+  {
+    label: "SVB Scenario",
+    patch: {
+      forceDay1Event: true,
+      reserveLiquidity: 0.5,
+      redemptionSeverity: 0.15,
+    },
+  },
+  {
+    label: "Regulatory Action",
+    patch: {
+      forceDay1Event: true,
+      reserveLiquidity: 0.6,
+      redemptionSeverity: 0.2,
+    },
+  },
 ];
 
 export function SliderPanel({ params, onChange, selectedId }: Props) {
@@ -106,7 +126,57 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
 
       <div className="h-px bg-stroke" />
 
-      {selectedId === "usde" ? (
+      {selectedId === "usdc" || selectedId === "usdt" ? (
+        <>
+          <Slider
+            label="Event Probability"
+            value={params.eventProbability ?? 0.0001}
+            min={0}
+            max={0.01}
+            step={0.0001}
+            display={`${((params.eventProbability ?? 0) * 100).toFixed(3)}%/day`}
+            subtitle="Daily chance of a confidence event (bank failure, regulatory action, audit issue)."
+            onChange={(v) => patch({ eventProbability: v })}
+          />
+          <Slider
+            label="Redemption Severity"
+            value={params.redemptionSeverity ?? 0.1}
+            min={0.05}
+            max={0.5}
+            step={0.01}
+            display={pct(params.redemptionSeverity ?? 0.1)}
+            subtitle="What % of supply tries to redeem during an event."
+            onChange={(v) => patch({ redemptionSeverity: v })}
+          />
+          <Slider
+            label="Reserve Liquidity"
+            value={params.reserveLiquidity ?? 1.0}
+            min={0.3}
+            max={1.0}
+            step={0.05}
+            display={pct(params.reserveLiquidity ?? 1.0)}
+            subtitle="How quickly reserves can be converted to cash. Lower during banking crises (bank deposits frozen)."
+            onChange={(v) => patch({ reserveLiquidity: v })}
+          />
+          <Slider
+            label="Simulation Days"
+            value={params.days}
+            min={7}
+            max={180}
+            step={1}
+            display={`${params.days} days`}
+            onChange={(v) => patch({ days: Math.round(v) })}
+          />
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-cream">
+            <input
+              type="checkbox"
+              checked={!!params.forceDay1Event}
+              onChange={(e) => patch({ forceDay1Event: e.target.checked })}
+            />
+            <span>Force confidence event on day 1</span>
+          </label>
+        </>
+      ) : selectedId === "usde" ? (
         <>
           <Slider
             label="Funding Rate Volatility"
@@ -188,7 +258,9 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
         </>
       )}
 
-      {selectedId === "usde" ? null : selectedId === "lusd" ? (
+      {selectedId === "usde" ||
+      selectedId === "usdc" ||
+      selectedId === "usdt" ? null : selectedId === "lusd" ? (
         <>
           <Slider
             label="Your CR"

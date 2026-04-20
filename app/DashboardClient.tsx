@@ -8,6 +8,7 @@ import { SliderPanel } from "@/components/SliderPanel";
 import { StablecoinSelector } from "@/components/StablecoinSelector";
 import {
   simulateDAI,
+  simulateFiatBacked,
   simulateGHO,
   simulateLUSD,
   simulateOvercollateralizedBTC,
@@ -92,6 +93,7 @@ export function DashboardClient({
   const selected = getStablecoin(selectedId);
   const btcBacked = isBtcBacked(selected);
   const isUsde = selectedId === "usde";
+  const isFiat = selectedId === "usdc" || selectedId === "usdt";
   const underlyingPrice = btcBacked ? btcPrice : ethPrice;
   const underlyingLabel = btcBacked ? "BTC" : "ETH";
 
@@ -117,12 +119,39 @@ export function DashboardClient({
         coin.id === "usde" ? (prev.fundingRateShock ?? 0) : undefined,
       reserveFund:
         coin.id === "usde" ? (prev.reserveFund ?? 50_000_000) : undefined,
-      totalSupply:
-        coin.id === "usde" ? (prev.totalSupply ?? 3_000_000_000) : undefined,
       fundingMeanDaily:
         coin.id === "usde"
           ? (prev.fundingMeanDaily ?? fundingMeanDaily)
           : undefined,
+      ...(coin.id === "usdc"
+        ? {
+            eventProbability: 0.0001,
+            redemptionSeverity: 0.1,
+            baseLiquidity: 0.86,
+            reserveLiquidity: 1.0,
+            totalSupply: 35_000_000_000,
+            forceDay1Event: false,
+          }
+        : coin.id === "usdt"
+          ? {
+              eventProbability: 0.0005,
+              redemptionSeverity: 0.15,
+              baseLiquidity: 0.71,
+              reserveLiquidity: 1.0,
+              totalSupply: 120_000_000_000,
+              forceDay1Event: false,
+            }
+          : {
+              eventProbability: undefined,
+              redemptionSeverity: undefined,
+              baseLiquidity: undefined,
+              reserveLiquidity: undefined,
+              forceDay1Event: undefined,
+              totalSupply:
+                coin.id === "usde"
+                  ? (prev.totalSupply ?? 3_000_000_000)
+                  : undefined,
+            }),
     }));
   };
 
@@ -139,6 +168,7 @@ export function DashboardClient({
     }
     if (
       !isUsde &&
+      !isFiat &&
       (!Number.isFinite(underlyingPrice) || underlyingPrice <= 0)
     ) {
       setError(`Invalid ${underlyingLabel} price: ${underlyingPrice}`);
@@ -147,6 +177,7 @@ export function DashboardClient({
     }
     if (
       !isUsde &&
+      !isFiat &&
       selectedId !== "lusd" &&
       params.liquidationThreshold >= params.collateralRatio
     ) {
@@ -165,13 +196,15 @@ export function DashboardClient({
         const t0 = performance.now();
         const result = isUsde
           ? simulateUSDe(params)
-          : btcBacked
-            ? simulateOvercollateralizedBTC(underlyingPrice, params)
-            : selectedId === "lusd"
-              ? simulateLUSD(underlyingPrice, params)
-              : selectedId === "gho"
-                ? simulateGHO(ethPrice, btcPrice, params)
-                : simulateDAI(underlyingPrice, params);
+          : isFiat
+            ? simulateFiatBacked(params)
+            : btcBacked
+              ? simulateOvercollateralizedBTC(underlyingPrice, params)
+              : selectedId === "lusd"
+                ? simulateLUSD(underlyingPrice, params)
+                : selectedId === "gho"
+                  ? simulateGHO(ethPrice, btcPrice, params)
+                  : simulateDAI(underlyingPrice, params);
         const t1 = performance.now();
         const bad = validateResult(result);
         if (bad) {
@@ -199,6 +232,7 @@ export function DashboardClient({
     underlyingLabel,
     btcBacked,
     isUsde,
+    isFiat,
     ethPrice,
     btcPrice,
     selectedId,
@@ -246,7 +280,33 @@ export function DashboardClient({
           threshold. Red paths breached liquidation; blue paths survived.
         </p>
         <div className="mt-4 flex flex-wrap gap-6 font-mono text-xs text-muted">
-          {isUsde ? (
+          {isFiat ? (
+            <>
+              <div>
+                Supply:{" "}
+                <span className="text-cream">
+                  {formatUsdCompact(params.totalSupply ?? 0)}
+                </span>
+              </div>
+              <div>
+                Reserve liquidity:{" "}
+                <span className="text-cream">
+                  {(
+                    (params.baseLiquidity ?? 0.86) *
+                    (params.reserveLiquidity ?? 1) *
+                    100
+                  ).toFixed(0)}
+                  %
+                </span>
+              </div>
+              <div>
+                Event prob:{" "}
+                <span className="text-cream">
+                  {((params.eventProbability ?? 0) * 100).toFixed(3)}%/day
+                </span>
+              </div>
+            </>
+          ) : isUsde ? (
             <>
               <div>
                 Reserve:{" "}
@@ -312,14 +372,30 @@ export function DashboardClient({
                 currentPrice={
                   isUsde
                     ? (run.params.reserveFund ?? 50_000_000)
-                    : underlyingPrice
+                    : isFiat
+                      ? 1.0
+                      : underlyingPrice
                 }
                 liquidationThreshold={run.params.liquidationThreshold}
                 collateralRatio={run.params.collateralRatio}
                 elapsedMs={run.elapsedMs}
-                thresholdOverride={isUsde ? 0 : undefined}
-                thresholdLabel={isUsde ? "reserve depleted" : undefined}
-                formatValue={isUsde ? formatUsdCompact : undefined}
+                thresholdOverride={
+                  isUsde ? 0 : isFiat ? 0.97 : undefined
+                }
+                thresholdLabel={
+                  isUsde
+                    ? "reserve depleted"
+                    : isFiat
+                      ? "depeg $0.97"
+                      : undefined
+                }
+                formatValue={
+                  isUsde
+                    ? formatUsdCompact
+                    : isFiat
+                      ? (n) => `$${n.toFixed(3)}`
+                      : undefined
+                }
               />
               <ResultsPanel
                 result={run.result}

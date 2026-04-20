@@ -394,6 +394,41 @@ function renderOutcome(
   liqPrice: number,
   buffer: number
 ) {
+  const isFiatOutcome =
+    p.eventProbability !== undefined ||
+    p.baseLiquidity !== undefined ||
+    p.redemptionSeverity !== undefined;
+  if (isFiatOutcome) {
+    const total = result.paths.length;
+    const count = result.depegCount;
+    const pct = result.depegProbability * 100;
+    let minPeg = Infinity;
+    for (const path of result.paths) {
+      for (const v of path) if (v < minPeg) minPeg = v;
+    }
+    if (count === 0) {
+      return (
+        <p>
+          Across <Hi>{total.toLocaleString()}</Hi> paths, the peg{" "}
+          <HiAccent tone="good">held above $0.97</HiAccent>. Deepest dip
+          reached <Hi>${minPeg.toFixed(3)}</Hi>. Reserve liquidity was
+          sufficient to absorb redemption pressure at these settings.
+        </p>
+      );
+    }
+    const tone = pct < 5 ? "warn" : "bad";
+    return (
+      <p>
+        The peg <HiAccent tone={tone}>dipped below $0.97</HiAccent> in{" "}
+        <Hi>{count.toLocaleString()}</Hi> of{" "}
+        <Hi>{total.toLocaleString()}</Hi> paths (<Hi>{pct.toFixed(1)}%</Hi>).
+        Deepest dip across all paths: <Hi>${minPeg.toFixed(3)}</Hi>. Redemption
+        demand exceeded the liquid portion of reserves, forcing secondary
+        markets to clear below par until the issuer could settle T-bills.
+      </p>
+    );
+  }
+
   const isUsdeOutcome =
     p.fundingRateVol !== undefined ||
     p.reserveFund !== undefined ||
@@ -595,6 +630,31 @@ function renderSuggestions(
   _result: SimulationResult,
   buffer: number
 ): React.ReactNode[] {
+  const isFiat =
+    p.eventProbability !== undefined ||
+    p.baseLiquidity !== undefined ||
+    p.redemptionSeverity !== undefined;
+  if (isFiat) {
+    return [
+      <ul key="list" className="list-disc space-y-2 pl-5">
+        <li key="liq">
+          Raising <Hi>reserve liquidity</Hi> (more T-bills, fewer bank
+          deposits or commercial paper) lets the issuer honor redemptions
+          without selling illiquid assets at a discount.
+        </li>
+        <li key="sev">
+          Lowering <Hi>redemption severity</Hi> — e.g. via redemption windows,
+          gating, or PSM-style arb loops — spreads demand over time so the
+          liquid buffer isn&apos;t overwhelmed in a single day.
+        </li>
+        <li key="prob">
+          A lower <Hi>event probability</Hi> reflects stronger issuer
+          reputation and reserve transparency — fewer banking-shock or
+          regulatory scares to trigger a run in the first place.
+        </li>
+      </ul>,
+    ];
+  }
   const isUsde =
     p.fundingRateVol !== undefined ||
     p.reserveFund !== undefined ||

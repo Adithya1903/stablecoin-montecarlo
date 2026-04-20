@@ -301,6 +301,106 @@ export function simulateLUSD(
 }
 
 /**
+ * Fiat-backed sim (USDC/USDT). Peg sits at $1 until a confidence event
+ * forces redemptions that exceed what the reserve basket can liquidate
+ * in-cycle. Reserve composition is collapsed to a single weighted
+ * liquidity factor (0..1): T-bills ~0.95, bank deposits ~0.50, CP ~0.30,
+ * other ~0.20. The UI exposes `reserveLiquidity` as a scalar on top to
+ * simulate frozen rails (SVB-style).
+ *
+ * Event outcome per path:
+ *  - liquidity >= demand  → tiny temporary dip (0.5% worst case)
+ *  - liquidity <  demand  → peg = liquidity / demand (direct proportional)
+ * Peg then linearly recovers to $1 over a random 3–7 days as illiquid
+ * assets are sold. Depeg flag fires the first day peg < 0.97.
+ */
+export function simulateFiatBacked(params: SimulationParams): SimulationResult {
+  const days = params.days;
+  const numSimulations = params.numSimulations;
+  const eventProb = params.eventProbability ?? 0.0001;
+  const severity = params.redemptionSeverity ?? 0.1;
+  const baseLiq = params.baseLiquidity ?? 0.86;
+  const liqScale = params.reserveLiquidity ?? 1.0;
+  const effLiq = Math.max(0, Math.min(1, baseLiq * liqScale));
+  const forceDay1 = params.forceDay1Event ?? false;
+  const DEPEG = 0.97;
+
+  const pathLen = days + 1;
+  const paths: number[][] = new Array(numSimulations);
+  const depegDays: (number | null)[] = new Array(numSimulations);
+  const minPeg = new Float64Array(numSimulations);
+  let depegCount = 0;
+
+  for (let i = 0; i < numSimulations; i++) {
+    const path = new Array<number>(pathLen);
+    path[0] = 1.0;
+    let firstDepeg: number | null = null;
+    let recoveryDaysLeft = 0;
+    let currentPeg = 1.0;
+    let mn = 1.0;
+
+    for (let d = 1; d <= days; d++) {
+      const eventToday =
+        (d === 1 && forceDay1) || Math.random() < eventProb;
+
+      if (eventToday) {
+        if (effLiq >= severity) {
+          const stress = Math.max(0, severity / effLiq - 0.5);
+          currentPeg = 1.0 - 0.01 * stress;
+        } else {
+          currentPeg = effLiq / severity;
+        }
+        recoveryDaysLeft = 3 + Math.floor(Math.random() * 5);
+      } else if (recoveryDaysLeft > 0) {
+        const step = (1.0 - currentPeg) / recoveryDaysLeft;
+        currentPeg = currentPeg + step;
+        recoveryDaysLeft--;
+      } else {
+        currentPeg = 1.0;
+      }
+
+      path[d] = currentPeg;
+      if (currentPeg < mn) mn = currentPeg;
+      if (firstDepeg === null && currentPeg < DEPEG) firstDepeg = d;
+    }
+
+    paths[i] = path;
+    depegDays[i] = firstDepeg;
+    minPeg[i] = mn;
+    if (firstDepeg !== null) depegCount++;
+  }
+
+  const medianPath = new Array<number>(pathLen);
+  const percentile5Path = new Array<number>(pathLen);
+  const percentile95Path = new Array<number>(pathLen);
+  const column = new Array<number>(numSimulations);
+  for (let d = 0; d < pathLen; d++) {
+    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
+    const sorted = column.slice().sort((a, b) => a - b);
+    percentile5Path[d] = quantile(sorted, 0.05);
+    medianPath[d] = quantile(sorted, 0.5);
+    percentile95Path[d] = quantile(sorted, 0.95);
+  }
+
+  // "Worst" = path with deepest single-day dip
+  let worstIdx = 0;
+  for (let i = 1; i < numSimulations; i++) {
+    if (minPeg[i] < minPeg[worstIdx]) worstIdx = i;
+  }
+
+  return {
+    paths,
+    depegCount,
+    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegDays,
+    worstPath: paths[worstIdx],
+    medianPath,
+    percentile5Path,
+    percentile95Path,
+  };
+}
+
+/**
  * USDe sim. Ethena's delta-neutral model cancels price moves out — the
  * risk is funding rates. When funding is positive, shorts earn; when
  * negative, shorts PAY and the reserve fund drains. Reserve hitting 0
