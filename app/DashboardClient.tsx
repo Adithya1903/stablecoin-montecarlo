@@ -8,6 +8,7 @@ import { SliderPanel } from "@/components/SliderPanel";
 import { StablecoinSelector } from "@/components/StablecoinSelector";
 import {
   simulateDAI,
+  simulateGHO,
   simulateLUSD,
   simulateOvercollateralizedBTC,
 } from "@/lib/montecarlo";
@@ -96,6 +97,7 @@ export function DashboardClient({
       usdcShock: coin.id === "dai" ? (prev.usdcShock ?? 0) : 0,
       userCR: coin.id === "lusd" ? (prev.userCR ?? 1.5) : undefined,
       systemCR: coin.id === "lusd" ? (prev.systemCR ?? 2.5) : undefined,
+      correlation: coin.id === "gho" ? (prev.correlation ?? 0.7) : undefined,
     }));
   };
 
@@ -136,7 +138,9 @@ export function DashboardClient({
           ? simulateOvercollateralizedBTC(underlyingPrice, params)
           : selectedId === "lusd"
             ? simulateLUSD(underlyingPrice, params)
-            : simulateDAI(underlyingPrice, params);
+            : selectedId === "gho"
+              ? simulateGHO(ethPrice, btcPrice, params)
+              : simulateDAI(underlyingPrice, params);
         const t1 = performance.now();
         const bad = validateResult(result);
         if (bad) {

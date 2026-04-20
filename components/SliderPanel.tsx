@@ -43,6 +43,14 @@ const PRESETS: Preset[] = [
       systemCR: 1.6,
     },
   },
+  {
+    label: "Correlated Crash",
+    patch: { volatility: 0.08, initialCrash: -0.25, correlation: 1.0 },
+  },
+  {
+    label: "Diversified",
+    patch: { volatility: 0.04, initialCrash: 0, correlation: 0.3 },
+  },
 ];
 
 export function SliderPanel({ params, onChange, selectedId }: Props) {
@@ -159,6 +167,19 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
             }
           />
         </>
+      )}
+
+      {selectedId === "gho" && (
+        <Slider
+          label="Correlation"
+          value={params.correlation ?? 0.7}
+          min={0}
+          max={1}
+          step={0.1}
+          display={(params.correlation ?? 0.7).toFixed(1)}
+          subtitle="How likely ETH/BTC/LINK crash together. 0 = independent (diversification works). 1 = everything crashes together. Crypto is typically ~0.6–0.8."
+          onChange={(v) => patch({ correlation: v })}
+        />
       )}
 
       {selectedId === "dai" && (

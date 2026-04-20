@@ -221,6 +221,38 @@ function renderSetup(
     );
   }
 
+  const corr = p.correlation;
+  if (corr !== undefined) {
+    if (corr <= 0.3) {
+      paragraphs.push(
+        <p key="gho-lowcorr">
+          At <HiAccent tone="good">{corr.toFixed(1)}</HiAccent> correlation,
+          GHO benefits from real <Hi>diversification</Hi>. Even if ETH
+          crashes, BTC and LINK may hold, supporting the collateral basket
+          (50% ETH / 30% BTC / 20% LINK).
+        </p>
+      );
+    } else if (corr >= 0.7) {
+      paragraphs.push(
+        <p key="gho-hicorr">
+          At <HiAccent tone="bad">{corr.toFixed(1)}</HiAccent> correlation, a{" "}
+          <Hi>market-wide crash</Hi> hits all three collateral legs
+          simultaneously. Diversification provides minimal protection — the
+          basket moves nearly as one asset.
+        </p>
+      );
+    } else {
+      paragraphs.push(
+        <p key="gho-midcorr">
+          Correlation of <Hi>{corr.toFixed(1)}</Hi> is typical of normal crypto
+          markets — some shared beta, some idiosyncratic moves. Diversification
+          helps at the margin but won&apos;t save the basket in a systemic
+          crash.
+        </p>
+      );
+    }
+  }
+
   const isLusd = p.userCR !== undefined || p.systemCR !== undefined;
   if (isLusd) {
     const userCR = (p.userCR ?? 1.5) * 100;

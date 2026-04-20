@@ -26,6 +26,8 @@ export type SimulationParams = {
   userCR?: number;
   /** LUSD-only: system-wide starting CR. Below 1.5 → Recovery Mode. */
   systemCR?: number;
+  /** GHO-only: pairwise correlation between ETH/BTC/LINK returns (0..1). */
+  correlation?: number;
 };
 
 export type SimulationResult = {
