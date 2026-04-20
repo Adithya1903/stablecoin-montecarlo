@@ -53,6 +53,23 @@ export function ScenarioAnalysis({ params, result, ethPrice }: Props) {
           animKey={buckets.outcome}
         >
           {renderOutcome(params, result, stats, ethPrice, liqPrice, buffer)}
+          {(result.recoveryModeCount ?? 0) > 0 && (
+            <p>
+              <HiAccent tone="warn">Recovery Mode</HiAccent> activated in{" "}
+              <Hi>
+                {(
+                  ((result.recoveryModeCount ?? 0) / result.paths.length) *
+                  100
+                ).toFixed(1)}
+                %
+              </Hi>{" "}
+              of paths, on average around{" "}
+              <Hi>day {(result.recoveryModeAvgDay ?? 0).toFixed(1)}</Hi>. Once
+              system CR drops below 150%, every position below 150% becomes
+              liquidatable — LUSD&apos;s safety valve that protects the
+              protocol by shedding weak positions during stress.
+            </p>
+          )}
         </Section>
 
         {result.depegProbability > 0 && (
@@ -202,6 +219,32 @@ function renderSetup(
         liquidation triggers at <Hi>{formatUsd(liqPrice)}</Hi>.
       </p>
     );
+  }
+
+  const isLusd = p.userCR !== undefined || p.systemCR !== undefined;
+  if (isLusd) {
+    const userCR = (p.userCR ?? 1.5) * 100;
+    const systemCR = (p.systemCR ?? 2.5) * 100;
+    if ((p.systemCR ?? 2.5) >= 1.5) {
+      paragraphs.push(
+        <p key="lusd-normal">
+          The system is in <HiAccent tone="good">Normal Mode</HiAccent> at{" "}
+          <Hi>{systemCR.toFixed(0)}%</Hi> system CR. Your position is only at
+          risk if your personal CR (<Hi>{userCR.toFixed(0)}%</Hi>) drops below{" "}
+          <Hi>110%</Hi>.
+        </p>
+      );
+    } else {
+      paragraphs.push(
+        <p key="lusd-recov">
+          System CR of <HiAccent tone="bad">{systemCR.toFixed(0)}%</HiAccent>{" "}
+          starts already in <Hi>Recovery Mode</Hi>: any position below{" "}
+          <Hi>150%</Hi> is immediately liquidatable. At{" "}
+          <Hi>{userCR.toFixed(0)}%</Hi>, you&apos;re{" "}
+          {userCR < 150 ? "already in the liquidation set." : "just above the cut-off."}
+        </p>
+      );
+    }
   }
 
   const shock = p.usdcShock ?? 0;

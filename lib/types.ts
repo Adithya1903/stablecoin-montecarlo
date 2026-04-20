@@ -22,6 +22,10 @@ export type SimulationParams = {
   lstWeights?: { btc: number; stBtc: number };
   /** DAI-only: day-1 USDC depeg shock (e.g., -0.10 = USDC drops to $0.90). 0 = no shock. */
   usdcShock?: number;
+  /** LUSD-only: user's personal collateralization ratio. */
+  userCR?: number;
+  /** LUSD-only: system-wide starting CR. Below 1.5 → Recovery Mode. */
+  systemCR?: number;
 };
 
 export type SimulationResult = {
@@ -37,6 +41,10 @@ export type SimulationResult = {
   percentile5Path: number[];
   /** Per-day 95th percentile — synthetic, not a sample path. */
   percentile95Path: number[];
+  /** LUSD-only: count of paths that entered Recovery Mode at any point. */
+  recoveryModeCount?: number;
+  /** LUSD-only: mean day of first Recovery Mode entry across paths that entered. */
+  recoveryModeAvgDay?: number | null;
 };
 
 // ---------------------------------------------------------------------------

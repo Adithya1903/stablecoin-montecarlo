@@ -34,6 +34,15 @@ const PRESETS: Preset[] = [
     label: "SVB Crisis",
     patch: { volatility: 0.06, initialCrash: 0, usdcShock: -0.1 },
   },
+  {
+    label: "Recovery Mode Stress",
+    patch: {
+      volatility: 0.08,
+      initialCrash: -0.2,
+      userCR: 1.4,
+      systemCR: 1.6,
+    },
+  },
 ];
 
 export function SliderPanel({ params, onChange, selectedId }: Props) {
@@ -97,33 +106,60 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
         onChange={(v) => patch({ days: Math.round(v) })}
       />
 
-      <Slider
-        label="Collateralization Ratio"
-        value={params.collateralRatio}
-        min={1.1}
-        max={2.0}
-        step={0.05}
-        display={pct(params.collateralRatio)}
-        subtitle="MakerDAO uses 150%. LUSD uses 110%."
-        onChange={(v) => patch({ collateralRatio: v })}
-      />
+      {selectedId === "lusd" ? (
+        <>
+          <Slider
+            label="Your CR"
+            value={params.userCR ?? 1.5}
+            min={1.1}
+            max={2.5}
+            step={0.05}
+            display={pct(params.userCR ?? 1.5)}
+            subtitle="Your personal collateralization ratio."
+            onChange={(v) => patch({ userCR: v })}
+          />
+          <Slider
+            label="System-wide CR"
+            value={params.systemCR ?? 2.5}
+            min={1.4}
+            max={3.5}
+            step={0.05}
+            display={pct(params.systemCR ?? 2.5)}
+            subtitle="Average CR across all LUSD positions. Below 150% triggers Recovery Mode, which liquidates any position below 150% — even if above the normal 110% threshold."
+            onChange={(v) => patch({ systemCR: v })}
+          />
+        </>
+      ) : (
+        <>
+          <Slider
+            label="Collateralization Ratio"
+            value={params.collateralRatio}
+            min={1.1}
+            max={2.0}
+            step={0.05}
+            display={pct(params.collateralRatio)}
+            subtitle="MakerDAO uses 150%. LUSD uses 110%."
+            onChange={(v) => patch({ collateralRatio: v })}
+          />
 
-      <Slider
-        label="Liquidation Threshold"
-        value={Math.min(params.liquidationThreshold, liqMax)}
-        min={1.0}
-        max={liqMax}
-        step={0.05}
-        display={pct(params.liquidationThreshold)}
-        subtitle={
-          liqNearCR
-            ? "⚠ Close to CR — tiny buffer means frequent liquidations."
-            : undefined
-        }
-        onChange={(v) =>
-          patch({ liquidationThreshold: Math.min(v, liqMax) })
-        }
-      />
+          <Slider
+            label="Liquidation Threshold"
+            value={Math.min(params.liquidationThreshold, liqMax)}
+            min={1.0}
+            max={liqMax}
+            step={0.05}
+            display={pct(params.liquidationThreshold)}
+            subtitle={
+              liqNearCR
+                ? "⚠ Close to CR — tiny buffer means frequent liquidations."
+                : undefined
+            }
+            onChange={(v) =>
+              patch({ liquidationThreshold: Math.min(v, liqMax) })
+            }
+          />
+        </>
+      )}
 
       {selectedId === "dai" && (
         <Slider

@@ -202,6 +202,105 @@ export function simulateDAI(
 }
 
 /**
+ * LUSD sim. ETH-only collateral with a two-tier liquidation rule:
+ *
+ *  - Normal mode: user liquidated if their ratio < 1.10
+ *  - Recovery mode: if system-wide ratio drops below 1.50, ANY user below
+ *    1.50 is liquidatable — the protocol's stress-time safety valve.
+ *
+ * Both ratios move proportionally with ETH price from their starting values
+ * (`userCR` and `systemCR`). Liquidation is triggered on a path if EITHER
+ * rule fires on any day.
+ */
+export function simulateLUSD(
+  ethPrice: number,
+  params: SimulationParams
+): SimulationResult {
+  const {
+    volatility,
+    days,
+    numSimulations,
+    initialCrash,
+  } = params;
+  const userCR0 = params.userCR ?? 1.5;
+  const systemCR0 = params.systemCR ?? 2.5;
+
+  const pathLen = days + 1;
+  const paths: number[][] = new Array(numSimulations);
+  const depegDays: (number | null)[] = new Array(numSimulations);
+  const finalPrices = new Float64Array(numSimulations);
+  let depegCount = 0;
+  let recoveryCount = 0;
+  let recoverySum = 0;
+
+  for (let i = 0; i < numSimulations; i++) {
+    const path = new Array<number>(pathLen);
+    path[0] = ethPrice;
+    let price = ethPrice;
+    let firstDepeg: number | null = null;
+    let firstRecovery: number | null = null;
+
+    for (let d = 1; d <= days; d++) {
+      if (d === 1 && initialCrash !== 0) price = price * (1 + initialCrash);
+      else price = price * (1 + randomNormal(0, volatility));
+      path[d] = price;
+
+      const moveFactor = price / ethPrice;
+      const userRatio = moveFactor * userCR0;
+      const systemRatio = moveFactor * systemCR0;
+
+      const inRecovery = systemRatio < 1.5;
+      if (inRecovery && firstRecovery === null) firstRecovery = d;
+
+      if (firstDepeg === null) {
+        const normalLiq = userRatio < 1.1;
+        const recoveryLiq = inRecovery && userRatio < 1.5;
+        if (normalLiq || recoveryLiq) firstDepeg = d;
+      }
+    }
+
+    paths[i] = path;
+    depegDays[i] = firstDepeg;
+    finalPrices[i] = price;
+    if (firstDepeg !== null) depegCount++;
+    if (firstRecovery !== null) {
+      recoveryCount++;
+      recoverySum += firstRecovery;
+    }
+  }
+
+  const medianPath = new Array<number>(pathLen);
+  const percentile5Path = new Array<number>(pathLen);
+  const percentile95Path = new Array<number>(pathLen);
+  const column = new Array<number>(numSimulations);
+  for (let d = 0; d < pathLen; d++) {
+    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
+    const sorted = column.slice().sort((a, b) => a - b);
+    percentile5Path[d] = quantile(sorted, 0.05);
+    medianPath[d] = quantile(sorted, 0.5);
+    percentile95Path[d] = quantile(sorted, 0.95);
+  }
+
+  let worstIdx = 0;
+  for (let i = 1; i < numSimulations; i++) {
+    if (finalPrices[i] < finalPrices[worstIdx]) worstIdx = i;
+  }
+
+  return {
+    paths,
+    depegCount,
+    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegDays,
+    worstPath: paths[worstIdx],
+    medianPath,
+    percentile5Path,
+    percentile95Path,
+    recoveryModeCount: recoveryCount,
+    recoveryModeAvgDay: recoveryCount > 0 ? recoverySum / recoveryCount : null,
+  };
+}
+
+/**
  * Overcollateralized BTC-backed sim. When `lstBasisRisk` is false this is
  * identical to `simulatePaths`. When true, a second correlated RV is
  * simulated: the stBTC/BTC exchange rate. Effective collateral per day is

@@ -6,7 +6,11 @@ import { ScenarioAnalysis } from "@/components/ScenarioAnalysis";
 import { SimulationChart } from "@/components/SimulationChart";
 import { SliderPanel } from "@/components/SliderPanel";
 import { StablecoinSelector } from "@/components/StablecoinSelector";
-import { simulateDAI, simulateOvercollateralizedBTC } from "@/lib/montecarlo";
+import {
+  simulateDAI,
+  simulateLUSD,
+  simulateOvercollateralizedBTC,
+} from "@/lib/montecarlo";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
 
@@ -89,6 +93,9 @@ export function DashboardClient({
         coin.defaultLiqThreshold ?? prev.liquidationThreshold,
       lstBasisRisk: coin.id === "usbd" ? (prev.lstBasisRisk ?? false) : false,
       lstWeights: weights,
+      usdcShock: coin.id === "dai" ? (prev.usdcShock ?? 0) : 0,
+      userCR: coin.id === "lusd" ? (prev.userCR ?? 1.5) : undefined,
+      systemCR: coin.id === "lusd" ? (prev.systemCR ?? 2.5) : undefined,
     }));
   };
 
@@ -108,7 +115,10 @@ export function DashboardClient({
       setPending(false);
       return;
     }
-    if (params.liquidationThreshold >= params.collateralRatio) {
+    if (
+      selectedId !== "lusd" &&
+      params.liquidationThreshold >= params.collateralRatio
+    ) {
       setError(
         `Liquidation threshold (${params.liquidationThreshold}) must be below collateral ratio (${params.collateralRatio})`
       );
@@ -122,10 +132,11 @@ export function DashboardClient({
       try {
         console.log("[sim] start", { coin: selectedId, underlyingPrice, params });
         const t0 = performance.now();
-        const useBtcSim = btcBacked;
-        const result = useBtcSim
+        const result = btcBacked
           ? simulateOvercollateralizedBTC(underlyingPrice, params)
-          : simulateDAI(underlyingPrice, params);
+          : selectedId === "lusd"
+            ? simulateLUSD(underlyingPrice, params)
+            : simulateDAI(underlyingPrice, params);
         const t1 = performance.now();
         const bad = validateResult(result);
         if (bad) {
@@ -150,12 +161,28 @@ export function DashboardClient({
     };
   }, [underlyingPrice, underlyingLabel, btcBacked, selectedId, params, fetchError]);
 
-  const liqPrice = useMemo(
-    () =>
+  const isLusd = selectedId === "lusd";
+  const liqPrice = useMemo(() => {
+    if (isLusd) {
+      const userCR = params.userCR ?? 1.5;
+      return underlyingPrice * (1.1 / userCR);
+    }
+    return (
       underlyingPrice *
-      (params.liquidationThreshold / params.collateralRatio),
-    [underlyingPrice, params.liquidationThreshold, params.collateralRatio]
-  );
+      (params.liquidationThreshold / params.collateralRatio)
+    );
+  }, [
+    isLusd,
+    underlyingPrice,
+    params.liquidationThreshold,
+    params.collateralRatio,
+    params.userCR,
+  ]);
+  const buffer = isLusd
+    ? (((params.userCR ?? 1.5) - 1.1) / (params.userCR ?? 1.5)) * 100
+    : ((params.collateralRatio - params.liquidationThreshold) /
+        params.collateralRatio) *
+      100;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
@@ -184,14 +211,7 @@ export function DashboardClient({
           </div>
           <div>
             Buffer:{" "}
-            <span className="text-cream">
-              {(
-                ((params.collateralRatio - params.liquidationThreshold) /
-                  params.collateralRatio) *
-                100
-              ).toFixed(1)}
-              %
-            </span>
+            <span className="text-cream">{buffer.toFixed(1)}%</span>
           </div>
         </div>
       </header>
