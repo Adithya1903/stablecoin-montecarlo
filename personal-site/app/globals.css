@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: #2f6b3e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #8dbb9a;
+  }
+}
+
+::selection {
+  background: var(--accent);
+  color: #fafafa;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Anchor targets clear the fixed top bar */
+section[id],
+article[id] {
+  scroll-margin-top: 5rem;
+}
+
+/* Subtle fade-up on section entry. Scroll-driven, CSS-only, progressive
+   enhancement: browsers without animation-timeline render static. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .fade-up {
+      animation: fade-up linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 45%;
+    }
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
