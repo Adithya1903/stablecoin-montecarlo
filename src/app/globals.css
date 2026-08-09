@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* customs-form paper, light */
+  --paper: 245 242 233;
+  --paper-2: 236 231 218;
+  --ink: 28 26 22;
+  --ink-2: 94 89 78;
+  --ink-3: 140 133 118;
+  --rule: 205 198 181;
+  --accent: 122 31 31; /* oxblood stamp ink */
+  --stamp-green: 21 94 50;
+  --stamp-amber: 148 82 8;
+  --stamp-blue: 29 63 143;
+  --stamp-red: 154 27 27;
+  --stamp-grey: 96 91 80;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: 24 23 20;
+    --paper-2: 33 31 27;
+    --ink: 231 227 216;
+    --ink-2: 170 163 148;
+    --ink-3: 126 120 106;
+    --rule: 66 62 53;
+    --accent: 224 122 122;
+    --stamp-green: 106 199 143;
+    --stamp-amber: 232 176 96;
+    --stamp-blue: 132 165 240;
+    --stamp-red: 235 130 130;
+    --stamp-grey: 156 150 137;
+  }
+}
+
+html {
+  background-color: rgb(var(--paper));
+  color: rgb(var(--ink));
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.25);
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* stamped chip: shape glyph + text + colour, never colour alone */
+.stamp {
+  @apply inline-flex items-center gap-1 border-2 px-1.5 py-px font-mono text-[11px] font-bold uppercase tracking-widest;
+  border-radius: 2px;
+}
+
+.mrz {
+  @apply block overflow-x-auto whitespace-pre font-mono text-[13px] leading-relaxed tracking-[0.12em];
+  background: rgb(var(--ink));
+  color: rgb(var(--paper));
+  padding: 0.6rem 0.8rem;
+}
+
+.perf-rule {
+  border-top: 2px dashed rgb(var(--rule));
+}
+
+.field-label {
+  @apply block font-mono text-[10px] font-bold uppercase tracking-[0.18em];
+  color: rgb(var(--ink-3));
+}

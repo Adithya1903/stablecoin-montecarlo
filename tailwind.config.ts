@@ -1,26 +1,36 @@
-import type { Config } from "tailwindcss";
+import type { Config } from 'tailwindcss';
 
 const config: Config = {
-  content: [
-    "./pages/**/*.{js,ts,jsx,tsx,mdx}",
-    "./components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./app/**/*.{js,ts,jsx,tsx,mdx}",
-  ],
+  content: ['./src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        cream: "#F5F3EE",
-        charcoal: "#1C1917",
-        surface: "#292524",
-        stroke: "#44403C",
-        muted: "#A8A29E",
+        paper: 'rgb(var(--paper) / <alpha-value>)',
+        'paper-2': 'rgb(var(--paper-2) / <alpha-value>)',
+        ink: 'rgb(var(--ink) / <alpha-value>)',
+        'ink-2': 'rgb(var(--ink-2) / <alpha-value>)',
+        'ink-3': 'rgb(var(--ink-3) / <alpha-value>)',
+        rule: 'rgb(var(--rule) / <alpha-value>)',
+        accent: 'rgb(var(--accent) / <alpha-value>)',
+        'stamp-green': 'rgb(var(--stamp-green) / <alpha-value>)',
+        'stamp-amber': 'rgb(var(--stamp-amber) / <alpha-value>)',
+        'stamp-blue': 'rgb(var(--stamp-blue) / <alpha-value>)',
+        'stamp-red': 'rgb(var(--stamp-red) / <alpha-value>)',
+        'stamp-grey': 'rgb(var(--stamp-grey) / <alpha-value>)',
       },
       fontFamily: {
-        sans: ["var(--font-inter)", "system-ui", "sans-serif"],
-        mono: ["var(--font-jetbrains-mono)", "ui-monospace", "monospace"],
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'Consolas',
+          '"Liberation Mono"',
+          'monospace',
+        ],
       },
     },
   },
   plugins: [],
 };
+
 export default config;
