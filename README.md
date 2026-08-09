@@ -11,15 +11,16 @@ Plus `/methodology` — the published rubric behind every score.
 
 ## Deploy
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAdithya1903%2Fstablecoin-montecarlo%2Ftree%2Fclaude%2Fcrypto-regulation-tracker-o3ijii&project-name=crypto-regulation-tracker&repository-name=crypto-regulation-tracker)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAdithya1903%2Fstablecoin-montecarlo%2Ftree%2Fcrypto-regulation-tracker&project-name=crypto-regulation-tracker&repository-name=crypto-regulation-tracker)
 
-One click: Vercel clones this branch into a new `crypto-regulation-tracker`
-repo in your account and deploys it. No environment variables needed — the
-SQLite database is built from the committed dataset during `prebuild`
-(`npm run seed`) and bundled read-only into the serverless functions
-(`outputFileTracingIncludes` in `next.config.mjs`). Alternatively, import the
-repo in the Vercel dashboard and set the production branch to
-`claude/crypto-regulation-tracker-o3ijii`, or run `npx vercel` locally.
+One click: Vercel clones the `crypto-regulation-tracker` branch (a slash-free
+mirror of the development branch — Vercel's clone flow misparses branch names
+containing `/`) into a new repo in your account and deploys it. No environment
+variables needed — the SQLite database is built from the committed dataset
+during `prebuild` (`npm run seed`) and bundled read-only into the serverless
+functions (`outputFileTracingIncludes` in `next.config.mjs`). Alternatively,
+import the repo in the Vercel dashboard and set the production branch, or run
+`npx vercel` locally.
 
 ## Stack
 
