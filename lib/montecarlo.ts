@@ -1,6 +1,6 @@
 import { ReturnEngine } from "./returns";
 import { Rng, randomSeed, wilsonCI } from "./rng";
-import { SNAPSHOTS } from "./snapshots";
+import { SNAPSHOTS, reserveTiersFor } from "./snapshots";
 import type { PathMatrix, SimulationParams, SimulationResult } from "./types";
 
 /** Thrown for parameter values no simulator can run with (e.g. zero paths). */
@@ -70,8 +70,14 @@ export function pathRow(m: PathMatrix, i: number): number[] {
 /**
  * Per-day p5/median/p95 plus the worst path — the one with the deepest
  * intraday minimum. Replaces seven near-identical per-simulator blocks.
+ * With `weights` (importance sampling) the per-day quantiles are weighted,
+ * so the displayed fan reflects the NOMINAL distribution even though the
+ * paths were drawn from a tilted one.
  */
-function summarize(m: PathMatrix): {
+function summarize(
+  m: PathMatrix,
+  weights?: Float64Array
+): {
   medianPath: number[];
   percentile5Path: number[];
   percentile95Path: number[];
@@ -81,13 +87,42 @@ function summarize(m: PathMatrix): {
   const medianPath = new Array<number>(pathLen);
   const percentile5Path = new Array<number>(pathLen);
   const percentile95Path = new Array<number>(pathLen);
-  const column = new Float64Array(numPaths);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numPaths; i++) column[i] = data[i * pathLen + d];
-    column.sort();
-    percentile5Path[d] = quantile(column, 0.05);
-    medianPath[d] = quantile(column, 0.5);
-    percentile95Path[d] = quantile(column, 0.95);
+  if (!weights) {
+    const column = new Float64Array(numPaths);
+    for (let d = 0; d < pathLen; d++) {
+      for (let i = 0; i < numPaths; i++) column[i] = data[i * pathLen + d];
+      column.sort();
+      percentile5Path[d] = quantile(column, 0.05);
+      medianPath[d] = quantile(column, 0.5);
+      percentile95Path[d] = quantile(column, 0.95);
+    }
+  } else {
+    let totalW = 0;
+    for (let i = 0; i < numPaths; i++) totalW += weights[i];
+    const idx = new Uint32Array(numPaths);
+    const column = new Float64Array(numPaths);
+    for (let d = 0; d < pathLen; d++) {
+      for (let i = 0; i < numPaths; i++) {
+        column[i] = data[i * pathLen + d];
+        idx[i] = i;
+      }
+      idx.sort((a, b) => column[a] - column[b]);
+      const targets = [0.05 * totalW, 0.5 * totalW, 0.95 * totalW];
+      const out = [NaN, NaN, NaN];
+      let cum = 0;
+      let t = 0;
+      for (let k = 0; k < numPaths && t < 3; k++) {
+        cum += weights[idx[k]];
+        while (t < 3 && cum >= targets[t]) {
+          out[t] = column[idx[k]];
+          t++;
+        }
+      }
+      const last = column[idx[numPaths - 1]];
+      percentile5Path[d] = Number.isNaN(out[0]) ? last : out[0];
+      medianPath[d] = Number.isNaN(out[1]) ? last : out[1];
+      percentile95Path[d] = Number.isNaN(out[2]) ? last : out[2];
+    }
   }
 
   let worstIdx = 0;
@@ -375,18 +410,30 @@ export function simulateLUSD(
 }
 
 /**
- * Fiat-backed sim (USDC/USDT). Peg sits at $1 until a confidence event
- * forces redemptions that exceed what the reserve basket can liquidate
- * in-cycle. Reserve composition is collapsed to a single weighted
- * liquidity factor (0..1): T-bills ~0.95, bank deposits ~0.50, CP ~0.30,
- * other ~0.20. The UI exposes `reserveLiquidity` as a scalar on top to
- * simulate frozen rails (SVB-style).
+ * Fiat-backed run model (USDC/USDT), rebuilt per plan task 2.3.
  *
- * Event outcome per path:
- *  - liquidity >= demand  → tiny temporary dip (0.5% worst case)
- *  - liquidity <  demand  → peg = liquidity / demand (direct proportional)
- * Peg then linearly recovers to $1 over a random 3–7 days as illiquid
- * assets are sold. Depeg flag fires the first day peg < 0.97.
+ * A confidence event (probability `eventProbability`/day, or forced on
+ * day 1) kicks a self-exciting redemption intensity by
+ * `redemptionSeverity`. Each day, demand = baseline + intensity is served
+ * from the reserve tiers in liquidity order — bank-rail tiers first
+ * (capacity scaled by `reserveLiquidity`), then T-bills, then slower
+ * assets — each with a fire-sale haircut. The peg clears at
+ *
+ *   backing − liquidityDiscount(unmet) − depositFear + noise
+ *
+ * where the discount saturates continuously in unmet same-day
+ * redemptions, and depositFear prices potential loss on frozen bank
+ * tiers while a run is active (SVB-style: reserveLiquidity < 1). Peg
+ * dips feed next-day intensity (Hawkes-lite), so runs are runs; when
+ * demand falls back under capacity the discount vanishes and the peg
+ * recovers. Always-on ±7bp noise keeps quiet paths honest.
+ *
+ * Rare-event mode: when `eventProbability` < 0.2%/day, events are
+ * importance-sampled at a tilted daily rate and every statistic is
+ * reweighted by the likelihood ratio — `depegProbability` stays tight at
+ * 10k paths and `effectiveSampleSize` reports the cost. The fan's
+ * percentile lines are weighted, so they show the NOMINAL distribution;
+ * raw paths (and depegCount) reflect the tilted sampling.
  */
 export function simulateFiatBacked(
   params: SimulationParams,
@@ -397,13 +444,31 @@ export function simulateFiatBacked(
   const rng = new Rng(seed);
   const days = params.days;
   const numSimulations = params.numSimulations;
-  const eventProb = params.eventProbability ?? 0.0001;
-  const severity = params.redemptionSeverity ?? 0.1;
-  const baseLiq = params.baseLiquidity ?? 0.86;
-  const liqScale = params.reserveLiquidity ?? 1.0;
-  const effLiq = Math.max(0, Math.min(1, baseLiq * liqScale));
+  const eventProb =
+    params.eventProbability ?? SNAPSHOTS.usdc.eventProbability.value;
+  const severity =
+    params.redemptionSeverity ?? SNAPSHOTS.usdc.redemptionSeverity.value;
+  const liqScale = Math.max(0, Math.min(1, params.reserveLiquidity ?? 1.0));
   const forceDay1 = params.forceDay1Event ?? false;
+  const baseTiers = params.reserveTiers ?? reserveTiersFor("usdc");
+
   const DEPEG = 0.97;
+  const BASE_DEMAND = 0.002; // routine daily redemptions (fraction of supply)
+  const PEG_NOISE = 0.0007; // always-on secondary-market noise (±7bp)
+  const DISC_MAX = 0.15; // liquidity discount saturation
+  const DISC_HALF = 0.03; // unmet fraction at half-saturation
+  const INTENSITY_DECAY = 0.5; // geometric decay of run intensity
+  const PANIC_KICK = 0.3; // next-day intensity per unit of peg dip
+  const FEAR = 0.5; // pricing of potential loss on frozen bank tiers
+  const RUN_ACTIVE = 0.01; // intensity above this = run in progress
+
+  // Importance sampling for rare events: tilt the daily event rate up and
+  // carry the likelihood ratio L = Π (p/q or (1−p)/(1−q)) per path.
+  const TILT_Q = 0.005;
+  const tilted = !forceDay1 && eventProb > 0 && eventProb < 0.002;
+  const q = tilted ? TILT_Q : eventProb;
+  const logPQ = tilted ? Math.log(eventProb / q) : 0;
+  const logPQc = tilted ? Math.log((1 - eventProb) / (1 - q)) : 0;
 
   const pathLen = days + 1;
   const m: PathMatrix = {
@@ -412,47 +477,117 @@ export function simulateFiatBacked(
     pathLen,
   };
   const depegDays: (number | null)[] = new Array(numSimulations);
+  const weights = new Float64Array(numSimulations).fill(1);
   const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   for (let i = 0; i < numSimulations; i++) {
     const base = i * pathLen;
     m.data[base] = 1.0;
+    const tiers = baseTiers.map((t) => ({ ...t, remaining: t.share }));
+    let supply = 1.0;
+    let intensity = 0;
+    let logL = 0;
     let firstDepeg: number | null = null;
-    let recoveryDaysLeft = 0;
-    let currentPeg = 1.0;
 
     for (let d = 1; d <= days; d++) {
-      const eventToday =
-        (d === 1 && forceDay1) || rng.next() < eventProb;
+      const event = (d === 1 && forceDay1) || rng.next() < q;
+      if (tilted) logL += event ? logPQ : logPQc;
+      if (event) intensity += severity;
 
-      if (eventToday) {
-        if (effLiq >= severity) {
-          const stress = Math.max(0, severity / effLiq - 0.5);
-          currentPeg = 1.0 - 0.01 * stress;
-        } else {
-          currentPeg = effLiq / severity;
-        }
-        recoveryDaysLeft = 3 + Math.floor(rng.next() * 5);
-      } else if (recoveryDaysLeft > 0) {
-        const step = (1.0 - currentPeg) / recoveryDaysLeft;
-        currentPeg = currentPeg + step;
-        recoveryDaysLeft--;
-      } else {
-        currentPeg = 1.0;
+      // Serve today's demand down the liquidity waterfall.
+      const demand = (BASE_DEMAND + intensity) * supply;
+      let rem = demand;
+      let served = 0;
+      for (const t of tiers) {
+        if (rem <= 1e-12) break;
+        const railScale = t.bankRail ? liqScale : 1;
+        const cap = t.remaining * t.capacityPerDay * railScale;
+        const take = Math.min(cap, rem);
+        t.remaining -= take * (1 + t.haircut);
+        if (t.remaining < 0) t.remaining = 0;
+        rem -= take;
+        served += take;
       }
+      const unmet = rem;
+      supply = Math.max(1e-9, supply - served);
 
-      m.data[base + d] = currentPeg;
-      if (firstDepeg === null && currentPeg < DEPEG) firstDepeg = d;
+      let reserves = 0;
+      let bankRemaining = 0;
+      for (const t of tiers) {
+        reserves += t.remaining;
+        if (t.bankRail) bankRemaining += t.remaining;
+      }
+      const backing = Math.min(1, reserves / supply);
+      const navFear =
+        intensity > RUN_ACTIVE ? FEAR * (1 - liqScale) * bankRemaining : 0;
+      const liqDisc = (DISC_MAX * unmet) / (unmet + DISC_HALF);
+
+      let peg = backing - liqDisc - navFear + rng.normal(0, PEG_NOISE);
+      if (peg > 1.001) peg = 1.001;
+      if (peg < 0.2) peg = 0.2;
+
+      m.data[base + d] = peg;
+      if (firstDepeg === null && peg < DEPEG) firstDepeg = d;
+
+      // Hawkes-lite: dips raise tomorrow's redemption demand.
+      intensity =
+        INTENSITY_DECAY * intensity + PANIC_KICK * Math.max(0, 0.995 - peg);
     }
 
+    if (tilted) weights[i] = Math.exp(logL);
     depegDays[i] = firstDepeg;
     if (firstDepeg !== null) depegCount++;
     if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
       hooks.onBatch(m, depegDays, i + 1);
   }
 
-  return buildResult(m, depegCount, depegDays, seed);
+  // Estimate the depeg probability — reweighted when tilted.
+  let depegProbability: number;
+  let depegProbabilityCI: [number, number];
+  let effectiveSampleSize: number | undefined;
+  if (tilted) {
+    let sumL = 0;
+    let sumL2 = 0;
+    let sumLx = 0;
+    let sumL2x = 0;
+    for (let i = 0; i < numSimulations; i++) {
+      const L = weights[i];
+      sumL += L;
+      sumL2 += L * L;
+      if (depegDays[i] !== null) {
+        sumLx += L;
+        sumL2x += L * L;
+      }
+    }
+    const pHat = Math.min(1, sumLx / numSimulations);
+    const varY = Math.max(0, sumL2x / numSimulations - pHat * pHat);
+    const se = Math.sqrt(varY / numSimulations);
+    depegProbability = pHat;
+    depegProbabilityCI = [
+      Math.max(0, pHat - 1.96 * se),
+      Math.min(1, pHat + 1.96 * se),
+    ];
+    effectiveSampleSize = sumL2 > 0 ? (sumL * sumL) / sumL2 : 0;
+  } else {
+    depegProbability = numSimulations > 0 ? depegCount / numSimulations : 0;
+    depegProbabilityCI = wilsonCI(depegCount, numSimulations);
+  }
+
+  const s = summarize(m, tilted ? weights : undefined);
+  return {
+    paths: m,
+    depegCount,
+    depegProbability,
+    depegProbabilityCI,
+    effectiveSampleSize,
+    seed,
+    depegDays,
+    worstPath: pathRow(m, s.worstIdx),
+    medianPath: s.medianPath,
+    percentile5Path: s.percentile5Path,
+    percentile95Path: s.percentile95Path,
+  };
 }
 
 /**

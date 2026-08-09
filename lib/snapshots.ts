@@ -127,6 +127,22 @@ export const SNAPSHOTS = {
     ),
   },
 
+  /** Per-tier liquidation behavior for the fiat run model (modeling assumptions). */
+  fiatTierProfiles: snap(
+    {
+      "T-bills": { capacityPerDay: 0.05, haircut: 0.002, bankRail: false },
+      "Bank deposits": { capacityPerDay: 0.25, haircut: 0, bankRail: true },
+      "Cash & equivalents": {
+        capacityPerDay: 0.25,
+        haircut: 0,
+        bankRail: true,
+      },
+      Other: { capacityPerDay: 0.02, haircut: 0.03, bankRail: false },
+    },
+    "2026-08",
+    "Modeling assumptions: T-bill sales settle T+1 and absorb ~5%/day; bank wires clear same-day but depend on rails; 'other' (secured loans, corporate bonds) is slow and sells at a discount under fire"
+  ),
+
   usdc: {
     reserveComposition: snap(
       [
@@ -134,13 +150,7 @@ export const SNAPSHOTS = {
         { type: "Bank deposits", percentage: 20 },
       ],
       "2025-06",
-      "https://www.circle.com/en/transparency — monthly attestations",
-      "Collapsed to a single effective-liquidity scalar of 0.86"
-    ),
-    baseLiquidity: snap(
-      0.86,
-      "2025-06",
-      "Weighted haircut of the reserve tiers (T-bills 0.95, deposits 0.50)"
+      "https://www.circle.com/en/transparency — monthly attestations"
     ),
     totalSupply: snap(
       35_000_000_000,
@@ -167,13 +177,7 @@ export const SNAPSHOTS = {
         { type: "Other", percentage: 15 },
       ],
       "2025-06",
-      "https://tether.to/en/transparency — quarterly attestations",
-      "Collapsed to a single effective-liquidity scalar of 0.71"
-    ),
-    baseLiquidity: snap(
-      0.71,
-      "2025-06",
-      "Weighted haircut of the reserve tiers (T-bills 0.95, cash 0.50, other 0.20)"
+      "https://tether.to/en/transparency — quarterly attestations"
     ),
     totalSupply: snap(
       120_000_000_000,
@@ -210,3 +214,39 @@ export const SNAPSHOTS = {
     ),
   },
 } as const;
+
+/**
+ * Ordered liquidity waterfall for a fiat coin: bank-rail tiers first
+ * (same-day when rails are open), then T-bills, then everything else.
+ * Shares are fractions of total reserves.
+ */
+export function reserveTiersFor(
+  coinId: "usdc" | "usdt"
+): Array<{
+  type: string;
+  share: number;
+  capacityPerDay: number;
+  haircut: number;
+  bankRail: boolean;
+}> {
+  const comp = SNAPSHOTS[coinId].reserveComposition.value;
+  const profiles = SNAPSHOTS.fiatTierProfiles.value as Record<
+    string,
+    { capacityPerDay: number; haircut: number; bankRail: boolean }
+  >;
+  const tiers = comp.map((c) => {
+    const p = profiles[c.type] ?? profiles["Other"];
+    return {
+      type: c.type,
+      share: c.percentage / 100,
+      capacityPerDay: p.capacityPerDay,
+      haircut: p.haircut,
+      bankRail: p.bankRail,
+    };
+  });
+  tiers.sort((a, b) => {
+    if (a.bankRail !== b.bankRail) return a.bankRail ? -1 : 1;
+    return b.capacityPerDay - a.capacityPerDay;
+  });
+  return tiers;
+}

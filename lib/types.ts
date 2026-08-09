@@ -1,3 +1,16 @@
+/** One tier of a fiat issuer's reserve basket, in liquidity order. */
+export type ReserveTier = {
+  type: string;
+  /** Fraction of total reserves in this tier. */
+  share: number;
+  /** Fraction of the tier liquidatable per day (before rail stress). */
+  capacityPerDay: number;
+  /** Fire-sale haircut paid when liquidating this tier. */
+  haircut: number;
+  /** True for deposit/cash tiers whose capacity depends on banking rails. */
+  bankRail: boolean;
+};
+
 export type SimulationParams = {
   /** RNG seed — same seed + same params reproduces identical results. Omit for a random run. */
   seed?: number;
@@ -37,12 +50,12 @@ export type SimulationParams = {
   fundingMeanDaily?: number;
   /** Fiat-only: daily prob of a confidence event (bank/reg/audit). */
   eventProbability?: number;
-  /** Fiat-only: fraction of supply that redeems during an event. */
+  /** Fiat-only: redemption-demand kick (fraction of supply) an event adds to the run intensity. */
   redemptionSeverity?: number;
-  /** Fiat-only: weighted-avg liquidity factor of the reserve basket (0..1). */
-  baseLiquidity?: number;
-  /** Fiat-only: scalar multiplier on baseLiquidity (stress of banking rails). */
+  /** Fiat-only: banking-rail health (0..1). Scales bank-tier liquidation capacity; below 1 the market also prices fear of loss on frozen deposits. */
   reserveLiquidity?: number;
+  /** Fiat-only: liquidity waterfall (bank rails first). Defaults to the USDC snapshot tiers. */
+  reserveTiers?: ReserveTier[];
   /** Fiat-only: force a confidence event on day 1 regardless of eventProbability. */
   forceDay1Event?: boolean;
   /** UST-only: fraction of UST supply dumped on day 1 (e.g., 0.05 = 5%). */
@@ -70,8 +83,15 @@ export type SimulationResult = {
   paths: PathMatrix;
   depegCount: number;
   depegProbability: number;
-  /** Wilson 95% interval on depegProbability. */
+  /** Wilson 95% interval on depegProbability (normal-approx when importance-sampled). */
   depegProbabilityCI: [number, number];
+  /**
+   * Present when the run used importance sampling (fiat rare-event mode):
+   * events were oversampled and reweighted, `depegProbability` is the
+   * weighted estimate (it will not equal depegCount/numPaths), and this
+   * is the effective number of independent samples behind it.
+   */
+  effectiveSampleSize?: number;
   /** Seed the run actually used (either params.seed or a fresh random one). */
   seed: number;
   /** Per-path day-of-first-breach; null if the path never depegged. */

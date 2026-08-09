@@ -8,7 +8,7 @@ import { SliderPanel } from "@/components/SliderPanel";
 import { StablecoinSelector } from "@/components/StablecoinSelector";
 import { isBtcBacked } from "@/lib/dispatch";
 import { randomSeed } from "@/lib/rng";
-import { SNAPSHOTS } from "@/lib/snapshots";
+import { SNAPSHOTS, reserveTiersFor } from "@/lib/snapshots";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import { useSimulation } from "@/lib/useSimulation";
 import type { SimulationParams } from "@/lib/types";
@@ -123,7 +123,7 @@ export function DashboardClient({
         ? {
             eventProbability: SNAPSHOTS.usdc.eventProbability.value,
             redemptionSeverity: SNAPSHOTS.usdc.redemptionSeverity.value,
-            baseLiquidity: SNAPSHOTS.usdc.baseLiquidity.value,
+            reserveTiers: reserveTiersFor("usdc"),
             reserveLiquidity: 1.0,
             totalSupply: SNAPSHOTS.usdc.totalSupply.value,
             forceDay1Event: false,
@@ -132,7 +132,7 @@ export function DashboardClient({
           ? {
               eventProbability: SNAPSHOTS.usdt.eventProbability.value,
               redemptionSeverity: SNAPSHOTS.usdt.redemptionSeverity.value,
-              baseLiquidity: SNAPSHOTS.usdt.baseLiquidity.value,
+              reserveTiers: reserveTiersFor("usdt"),
               reserveLiquidity: 1.0,
               totalSupply: SNAPSHOTS.usdt.totalSupply.value,
               forceDay1Event: false,
@@ -140,7 +140,7 @@ export function DashboardClient({
           : {
               eventProbability: undefined,
               redemptionSeverity: undefined,
-              baseLiquidity: undefined,
+              reserveTiers: undefined,
               reserveLiquidity: undefined,
               forceDay1Event: undefined,
               totalSupply:
@@ -313,14 +313,19 @@ export function DashboardClient({
                 </span>
               </div>
               <div>
-                Reserve liquidity:{" "}
+                Liquid same-day:{" "}
                 <span className="text-cream">
                   {(
-                    (params.baseLiquidity ?? 0.86) *
-                    (params.reserveLiquidity ?? 1) *
-                    100
-                  ).toFixed(0)}
-                  %
+                    (params.reserveTiers ?? reserveTiersFor("usdc")).reduce(
+                      (s, t) =>
+                        s +
+                        t.share *
+                          t.capacityPerDay *
+                          (t.bankRail ? (params.reserveLiquidity ?? 1) : 1),
+                      0
+                    ) * 100
+                  ).toFixed(1)}
+                  %<span className="text-muted/70"> of supply</span>
                 </span>
               </div>
               <div>

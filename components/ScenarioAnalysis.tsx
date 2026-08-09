@@ -283,33 +283,56 @@ function renderSetup(
 
   const isFiat =
     p.eventProbability !== undefined ||
-    p.baseLiquidity !== undefined ||
+    p.reserveTiers !== undefined ||
     p.redemptionSeverity !== undefined;
   if (isFiat) {
     const eventProb = (p.eventProbability ?? 0.0001) * 100;
     const severity = (p.redemptionSeverity ?? 0.1) * 100;
-    const effLiq =
-      (p.baseLiquidity ?? 0.86) * (p.reserveLiquidity ?? 1.0) * 100;
+    const rail = p.reserveLiquidity ?? 1.0;
+    const tiers = p.reserveTiers ?? [];
+    const sameDay =
+      tiers.reduce(
+        (s, t) =>
+          s + t.share * t.capacityPerDay * (t.bankRail ? rail : 1),
+        0
+      ) * 100;
     return [
       <p key="fiat-1">
-        The peg holds at <Hi>$1.00</Hi> until a <Hi>confidence event</Hi>{" "}
-        (bank failure, regulatory action, audit scare) triggers mass
-        redemptions. Each day carries a{" "}
-        <Hi>{eventProb.toFixed(3)}%</Hi> chance of such an event
+        The peg trades in a tight band around <Hi>$1.00</Hi> until a{" "}
+        <Hi>confidence event</Hi> (bank failure, regulatory action, audit
+        scare) kicks off a <Hi>self-exciting run</Hi>: each day carries a{" "}
+        <Hi>{eventProb.toFixed(3)}%</Hi> event chance
         {p.forceDay1Event ? (
           <>
             {" "}
             — and one is <HiAccent tone="bad">forced on day 1</HiAccent>
           </>
         ) : null}
-        .
+        , and peg dips feed the next day&apos;s redemption demand.
       </p>,
       <p key="fiat-2">
-        During an event, <Hi>{severity.toFixed(0)}%</Hi> of supply attempts
-        to redeem against a reserve basket with{" "}
-        <Hi>{effLiq.toFixed(0)}%</Hi> effective liquidity. If liquid
-        reserves can&apos;t cover same-day redemptions, secondary markets
-        clear below par until slower assets are sold.
+        An event adds <Hi>{severity.toFixed(0)}%</Hi> of supply to
+        redemption demand, served down a liquidity waterfall
+        {tiers.length > 0 ? (
+          <>
+            {" "}
+            ({tiers
+              .map((t) => `${(t.share * 100).toFixed(0)}% ${t.type}`)
+              .join(", ")})
+          </>
+        ) : null}{" "}
+        that can liquidate about <Hi>{sameDay.toFixed(1)}%</Hi> of supply
+        per day at current banking-rail health (
+        <Hi>{(rail * 100).toFixed(0)}%</Hi>). Unmet same-day redemptions
+        push the market price below par
+        {rail < 1 ? (
+          <>
+            , and frozen deposit tiers add a{" "}
+            <HiAccent tone="warn">fear-of-loss discount</HiAccent> while
+            the run is active
+          </>
+        ) : null}
+        .
       </p>,
     ];
   }
@@ -525,37 +548,60 @@ function renderOutcome(
 
   const isFiatOutcome =
     p.eventProbability !== undefined ||
-    p.baseLiquidity !== undefined ||
+    p.reserveTiers !== undefined ||
     p.redemptionSeverity !== undefined;
   if (isFiatOutcome) {
     const total = result.paths.numPaths;
     const count = result.depegCount;
-    const pct = result.depegProbability * 100;
+    const prob = result.depegProbability;
+    const pctStr =
+      prob * 100 < 1
+        ? `${(prob * 100).toFixed(3)}%`
+        : `${(prob * 100).toFixed(1)}%`;
+    const ess = result.effectiveSampleSize;
     let minPeg = Infinity;
     {
       const { data, numPaths, pathLen } = result.paths;
-      const total = numPaths * pathLen;
-      for (let i = 0; i < total; i++) if (data[i] < minPeg) minPeg = data[i];
+      const cells = numPaths * pathLen;
+      for (let i = 0; i < cells; i++) if (data[i] < minPeg) minPeg = data[i];
     }
-    if (count === 0) {
+    const isNote =
+      ess !== undefined ? (
+        <>
+          {" "}
+          Rare events were <Hi>importance-sampled</Hi> (oversampled, then
+          reweighted — effective sample size{" "}
+          <Hi>{Math.round(ess).toLocaleString()}</Hi>), so the drawn paths
+          show events more often than the probability implies.
+        </>
+      ) : null;
+    if (prob === 0) {
       return (
         <p>
           Across <Hi>{total.toLocaleString()}</Hi> paths, the peg{" "}
           <HiAccent tone="good">held above $0.97</HiAccent>. Deepest dip
-          reached <Hi>${minPeg.toFixed(3)}</Hi>. Reserve liquidity was
-          sufficient to absorb redemption pressure at these settings.
+          reached <Hi>${minPeg.toFixed(3)}</Hi>. Same-day liquidation
+          capacity absorbed redemption demand at these settings.
+          {isNote}
         </p>
       );
     }
-    const tone = pct < 5 ? "warn" : "bad";
+    const tone = prob * 100 < 5 ? "warn" : "bad";
     return (
       <p>
-        The peg <HiAccent tone={tone}>dipped below $0.97</HiAccent> in{" "}
-        <Hi>{count.toLocaleString()}</Hi> of{" "}
-        <Hi>{total.toLocaleString()}</Hi> paths (<Hi>{pct.toFixed(1)}%</Hi>).
-        Deepest dip across all paths: <Hi>${minPeg.toFixed(3)}</Hi>. Redemption
-        demand exceeded the liquid portion of reserves, forcing secondary
-        markets to clear below par until the issuer could settle T-bills.
+        The peg <HiAccent tone={tone}>dips below $0.97</HiAccent> with
+        probability <Hi>{pctStr}</Hi>
+        {ess === undefined ? (
+          <>
+            {" "}
+            (<Hi>{count.toLocaleString()}</Hi> of{" "}
+            <Hi>{total.toLocaleString()}</Hi> paths)
+          </>
+        ) : null}
+        . Deepest dip across all paths: <Hi>${minPeg.toFixed(3)}</Hi>.
+        Redemption demand exceeded same-day liquidation capacity, and the
+        run fed on its own dips until demand fell back under capacity.
+        {isNote}
       </p>
     );
   }
@@ -783,7 +829,7 @@ function renderSuggestions(
 
   const isFiat =
     p.eventProbability !== undefined ||
-    p.baseLiquidity !== undefined ||
+    p.reserveTiers !== undefined ||
     p.redemptionSeverity !== undefined;
   if (isFiat) {
     return [
