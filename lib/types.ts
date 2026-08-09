@@ -23,9 +23,11 @@ export type SimulationParams = {
   systemCR?: number;
   /** GHO-only: pairwise correlation between ETH/BTC/LINK returns (0..1). */
   correlation?: number;
-  /** USDe-only: daily funding-rate volatility (e.g., 0.02 = 2%). */
+  /** USDe-only: stationary daily funding-rate σ (e.g., 0.0005 = 0.05%). */
   fundingRateVol?: number;
-  /** USDe-only: forced day-1 annualized funding shock (e.g., -0.3 = -30% apr). */
+  /** USDe-only: AR(1) persistence of daily funding (0..0.99). Fit from live data when available. */
+  fundingPhi?: number;
+  /** USDe-only: forced funding level on day 1, annualized (e.g., -0.3 = -30% APR). Decays via fundingPhi — a sustained spell, not a one-day blip. */
   fundingRateShock?: number;
   /** USDe-only: starting reserve fund in USD. */
   reserveFund?: number;
@@ -94,7 +96,7 @@ export interface EthMarketData {
   prices: [number, number][];
   dailyReturns: number[];
   meanReturn: number;
-  /** Daily stddev of returns — feed as sqrt(252) * volatility for annualized. */
+  /** Daily stddev of returns. Crypto trades every day — annualize with √365, not √252. */
   volatility: number;
 }
 

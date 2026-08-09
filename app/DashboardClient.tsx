@@ -16,6 +16,7 @@ import {
   simulateUST,
 } from "@/lib/montecarlo";
 import { randomSeed } from "@/lib/rng";
+import { SNAPSHOTS } from "@/lib/snapshots";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
 
@@ -80,17 +81,24 @@ function validateResult(r: SimulationResult): string | null {
 export function DashboardClient({
   ethPrice,
   btcPrice,
+  ethRealizedVol = null,
+  btcRealizedVol = null,
   summaries = {},
   fetchError = null,
-  fundingMeanDaily = 0.0001,
-  fundingVolDaily = 0.0005,
+  fundingMeanDaily = SNAPSHOTS.usde.fundingFallback.value.meanDaily,
+  fundingVolDaily = SNAPSHOTS.usde.fundingFallback.value.sdDaily,
+  fundingPhi = SNAPSHOTS.usde.fundingFallback.value.phi,
 }: {
   ethPrice: number;
   btcPrice: number;
+  /** 365d realized daily vol from CoinGecko history; null if the fetch failed. */
+  ethRealizedVol?: number | null;
+  btcRealizedVol?: number | null;
   summaries?: Record<string, Summary>;
   fetchError?: string | null;
   fundingMeanDaily?: number;
   fundingVolDaily?: number;
+  fundingPhi?: number;
 }) {
   const [selectedId, setSelectedId] = useState<string>("dai");
   const selected = getStablecoin(selectedId);
@@ -100,14 +108,30 @@ export function DashboardClient({
   const isUst = selectedId === "ust";
   const underlyingPrice = btcBacked ? btcPrice : ethPrice;
   const underlyingLabel = btcBacked ? "BTC" : "ETH";
+  const realizedVol = btcBacked ? btcRealizedVol : ethRealizedVol;
 
-  const [params, setParams] = useState<SimulationParams>(DEFAULTS);
+  const [params, setParams] = useState<SimulationParams>(() => ({
+    ...DEFAULTS,
+    // Seed the volatility default from live 365d realized vol when present.
+    volatility: ethRealizedVol ?? DEFAULTS.volatility,
+  }));
 
   const handleSelect = (coin: StablecoinConfig) => {
     setSelectedId(coin.id);
     const weights = lstWeights(coin);
+    const isCollateralModel = !["usde", "usdc", "usdt", "ust"].includes(
+      coin.id
+    );
+    const coinRealizedVol = isBtcBacked(coin)
+      ? btcRealizedVol
+      : ethRealizedVol;
     setParams((prev) => ({
       ...prev,
+      // Volatility default tracks the coin's underlying 365d realized vol.
+      volatility:
+        isCollateralModel && coinRealizedVol !== null
+          ? coinRealizedVol
+          : prev.volatility,
       collateralRatio: coin.defaultCR ?? prev.collateralRatio,
       liquidationThreshold:
         coin.defaultLiqThreshold ?? prev.liquidationThreshold,
@@ -119,30 +143,34 @@ export function DashboardClient({
       correlation: coin.id === "gho" ? (prev.correlation ?? 0.7) : undefined,
       fundingRateVol:
         coin.id === "usde" ? (prev.fundingRateVol ?? fundingVolDaily) : undefined,
+      fundingPhi:
+        coin.id === "usde" ? (prev.fundingPhi ?? fundingPhi) : undefined,
       fundingRateShock:
         coin.id === "usde" ? (prev.fundingRateShock ?? 0) : undefined,
       reserveFund:
-        coin.id === "usde" ? (prev.reserveFund ?? 50_000_000) : undefined,
+        coin.id === "usde"
+          ? (prev.reserveFund ?? SNAPSHOTS.usde.reserveFund.value)
+          : undefined,
       fundingMeanDaily:
         coin.id === "usde"
           ? (prev.fundingMeanDaily ?? fundingMeanDaily)
           : undefined,
       ...(coin.id === "usdc"
         ? {
-            eventProbability: 0.0001,
-            redemptionSeverity: 0.1,
-            baseLiquidity: 0.86,
+            eventProbability: SNAPSHOTS.usdc.eventProbability.value,
+            redemptionSeverity: SNAPSHOTS.usdc.redemptionSeverity.value,
+            baseLiquidity: SNAPSHOTS.usdc.baseLiquidity.value,
             reserveLiquidity: 1.0,
-            totalSupply: 35_000_000_000,
+            totalSupply: SNAPSHOTS.usdc.totalSupply.value,
             forceDay1Event: false,
           }
         : coin.id === "usdt"
           ? {
-              eventProbability: 0.0005,
-              redemptionSeverity: 0.15,
-              baseLiquidity: 0.71,
+              eventProbability: SNAPSHOTS.usdt.eventProbability.value,
+              redemptionSeverity: SNAPSHOTS.usdt.redemptionSeverity.value,
+              baseLiquidity: SNAPSHOTS.usdt.baseLiquidity.value,
               reserveLiquidity: 1.0,
-              totalSupply: 120_000_000_000,
+              totalSupply: SNAPSHOTS.usdt.totalSupply.value,
               forceDay1Event: false,
             }
           : {
@@ -153,15 +181,16 @@ export function DashboardClient({
               forceDay1Event: undefined,
               totalSupply:
                 coin.id === "usde"
-                  ? (prev.totalSupply ?? 3_000_000_000)
+                  ? (prev.totalSupply ?? SNAPSHOTS.usde.totalSupply.value)
                   : undefined,
             }),
       ...(coin.id === "ust"
         ? {
             initialSellPressure: prev.initialSellPressure ?? 0.05,
             reflexivityFactor: prev.reflexivityFactor ?? 3.0,
-            lunaStartMarketCap: prev.lunaStartMarketCap ?? 30_000_000_000,
-            ustSupplyUsd: prev.ustSupplyUsd ?? 18_000_000_000,
+            lunaStartMarketCap:
+              prev.lunaStartMarketCap ?? SNAPSHOTS.ust.lunaMarketCap.value,
+            ustSupplyUsd: prev.ustSupplyUsd ?? SNAPSHOTS.ust.supplyUsd.value,
             days: 14,
           }
         : {
@@ -333,13 +362,18 @@ export function DashboardClient({
               <div>
                 UST supply:{" "}
                 <span className="text-cream">
-                  {formatUsdCompact(params.ustSupplyUsd ?? 18_000_000_000)}
+                  {formatUsdCompact(
+                    params.ustSupplyUsd ?? SNAPSHOTS.ust.supplyUsd.value
+                  )}
                 </span>
               </div>
               <div>
                 LUNA cap:{" "}
                 <span className="text-cream">
-                  {formatUsdCompact(params.lunaStartMarketCap ?? 30_000_000_000)}
+                  {formatUsdCompact(
+                    params.lunaStartMarketCap ??
+                      SNAPSHOTS.ust.lunaMarketCap.value
+                  )}
                 </span>
               </div>
               <div>
@@ -380,7 +414,12 @@ export function DashboardClient({
               <div>
                 Reserve:{" "}
                 <span className="text-cream">
-                  {formatUsdCompact(params.reserveFund ?? 50_000_000)}
+                  {formatUsdCompact(
+                    params.reserveFund ?? SNAPSHOTS.usde.reserveFund.value
+                  )}
+                </span>{" "}
+                <span className="text-muted/70">
+                  (as of {SNAPSHOTS.usde.reserveFund.asOf})
                 </span>
               </div>
               <div>
@@ -395,7 +434,9 @@ export function DashboardClient({
               <div>
                 Supply:{" "}
                 <span className="text-cream">
-                  {formatUsdCompact(params.totalSupply ?? 3_000_000_000)}
+                  {formatUsdCompact(
+                    params.totalSupply ?? SNAPSHOTS.usde.totalSupply.value
+                  )}
                 </span>
               </div>
             </>
@@ -519,9 +560,39 @@ export function DashboardClient({
             params={params}
             onChange={setParams}
             selectedId={selectedId}
+            realizedVol={realizedVol}
           />
         </aside>
       </div>
+
+      <DataSourcesNote />
     </div>
+  );
+}
+
+function DataSourcesNote() {
+  return (
+    <footer className="mt-10 rounded-xl border border-stroke bg-surface/20 p-4 text-[11px] leading-relaxed text-muted">
+      <p className="mb-1 font-mono uppercase tracking-[0.18em]">
+        Data sources
+      </p>
+      <p>
+        Live: ETH/BTC spot & 365d history (CoinGecko), ETHUSDT/BTCUSDT
+        funding (Binance), stablecoin supplies (DeFiLlama). Protocol
+        constants are dated snapshots —{" "}
+        {[
+          ["Ethena reserve", SNAPSHOTS.usde.reserveFund.asOf],
+          ["DAI PSM split", SNAPSHOTS.dai.psmWeights.asOf],
+          ["GHO basket", SNAPSHOTS.gho.collateral.asOf],
+          ["USDC reserves", SNAPSHOTS.usdc.reserveComposition.asOf],
+          ["USDT reserves", SNAPSHOTS.usdt.reserveComposition.asOf],
+          ["UST/LUNA", SNAPSHOTS.ust.supplyUsd.asOf],
+        ]
+          .map(([label, asOf]) => `${label} (${asOf})`)
+          .join(", ")}{" "}
+        — see <span className="font-mono">lib/snapshots.ts</span> for every
+        figure&apos;s source. Educational tool, not risk advice.
+      </p>
+    </footer>
   );
 }

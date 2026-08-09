@@ -1,5 +1,6 @@
 import { ReturnEngine } from "./returns";
 import { Rng, randomSeed, wilsonCI } from "./rng";
+import { SNAPSHOTS } from "./snapshots";
 import type { SimulationParams, SimulationResult } from "./types";
 
 /** Thrown for parameter values no simulator can run with (e.g. zero paths). */
@@ -148,8 +149,8 @@ export function simulateDAI(
     liquidationThreshold,
   } = params;
 
-  const ETH_WEIGHT = 0.65;
-  const USDC_WEIGHT = 0.35;
+  const ETH_WEIGHT = SNAPSHOTS.dai.psmWeights.value.eth;
+  const USDC_WEIGHT = SNAPSHOTS.dai.psmWeights.value.usdc;
   const USDC_NOISE = 0.001;
   const USDC_REVERT = 1 / 7; // ~7-day mean reversion toward $1
   // ETH and the USDC peg are correlated (SVB week was a joint event):
@@ -464,6 +465,13 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
  * negative, shorts PAY and the reserve fund drains. Reserve hitting 0
  * is the depeg event. Paths record reserve balance over time (USD), so
  * downstream UI treats the "price" axis as dollars of reserve.
+ *
+ * Funding follows an AR(1): f_t = μ + φ(f_{t−1} − μ) + ε_t, fit from
+ * live Binance data when available — negative-funding spells persist for
+ * ~1/(1−φ) days instead of being i.i.d. blips. `fundingRateVol` is the
+ * STATIONARY daily σ; the innovation σ is derived as σ·√(1−φ²). A
+ * `fundingRateShock` (APR) forces day 1 to that level, after which the
+ * spell decays through the same persistence.
  */
 export function simulateUSDe(params: SimulationParams): SimulationResult {
   assertSimCount(params);
@@ -471,15 +479,18 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
   const rng = new Rng(seed);
   const days = params.days;
   const numSimulations = params.numSimulations;
-  // Daily funding σ as a fraction of notional. Real perp funding daily σ is
-  // on the order of 0.01–0.1%; 0.05% is a realistic default. (An earlier
-  // 0.02 default meant 2%/day — $60M daily P&L σ on a $3B supply — which
-  // made depeg near-certain regardless of other settings.)
-  const fundingVol = params.fundingRateVol ?? 0.0005;
+  const fallback = SNAPSHOTS.usde.fundingFallback.value;
+  // Stationary daily funding σ as a fraction of notional. Real perp
+  // funding daily σ is on the order of 0.01–0.1%. (An earlier 0.02
+  // default meant 2%/day — $60M daily P&L σ on a $3B supply — which made
+  // depeg near-certain regardless of other settings.)
+  const fundingVol = params.fundingRateVol ?? fallback.sdDaily;
+  const phi = Math.max(0, Math.min(0.99, params.fundingPhi ?? fallback.phi));
+  const sigmaEps = fundingVol * Math.sqrt(1 - phi * phi);
   const shockApr = params.fundingRateShock ?? 0;
-  const startReserve = params.reserveFund ?? 50_000_000;
-  const totalSupply = params.totalSupply ?? 3_000_000_000;
-  const meanDaily = params.fundingMeanDaily ?? 0.0001;
+  const startReserve = params.reserveFund ?? SNAPSHOTS.usde.reserveFund.value;
+  const totalSupply = params.totalSupply ?? SNAPSHOTS.usde.totalSupply.value;
+  const meanDaily = params.fundingMeanDaily ?? fallback.meanDaily;
 
   const pathLen = days + 1;
   const paths: number[][] = new Array(numSimulations);
@@ -492,13 +503,14 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
     path[0] = startReserve;
     let reserve = startReserve;
     let firstDepeg: number | null = null;
+    let funding = shockApr !== 0 ? shockApr / 365 : meanDaily;
 
     for (let d = 1; d <= days; d++) {
-      const dailyRate =
-        d === 1 && shockApr !== 0
-          ? shockApr / 365
-          : rng.normal(meanDaily, fundingVol);
-      reserve += totalSupply * dailyRate;
+      if (d > 1 || shockApr === 0) {
+        funding =
+          meanDaily + phi * (funding - meanDaily) + rng.normal(0, sigmaEps);
+      }
+      reserve += totalSupply * funding;
       if (reserve <= 0) {
         if (firstDepeg === null) firstDepeg = d;
         reserve = 0;
@@ -569,11 +581,12 @@ export function simulateGHO(
   } = params;
   const rho = params.correlation ?? 0.7; // engine clamps to (−1/2, 1]
 
-  const btcVol = 0.75 * volatility;
-  const linkVol = 1.5 * volatility;
-  const wEth = 0.5;
-  const wBtc = 0.3;
-  const wLink = 0.2;
+  const basket = SNAPSHOTS.gho.modelBasket.value;
+  const btcVol = basket.btcVolMult * volatility;
+  const linkVol = basket.linkVolMult * volatility;
+  const wEth = basket.wEth;
+  const wBtc = basket.wBtc;
+  const wLink = basket.wLink;
   const linkPrice = 15; // notional LINK start price; cancels out of ratio
 
   const pathLen = days + 1;
@@ -671,13 +684,14 @@ export function simulateUST(params: SimulationParams): SimulationResult {
   const numSimulations = params.numSimulations;
   const initialSellPressure = params.initialSellPressure ?? 0.05;
   const reflexivity = params.reflexivityFactor ?? 3.0;
-  const lunaMarketCap = params.lunaStartMarketCap ?? 30_000_000_000;
-  const ustSupply = params.ustSupplyUsd ?? 18_000_000_000;
+  const lunaMarketCap =
+    params.lunaStartMarketCap ?? SNAPSHOTS.ust.lunaMarketCap.value;
+  const ustSupply = params.ustSupplyUsd ?? SNAPSHOTS.ust.supplyUsd.value;
   const FULL_COLLAPSE = 0.5;
 
-  // Pre-collapse LUNA supply ~350M; the absolute value cancels out for the
+  // Pre-collapse LUNA supply; the absolute value cancels out for the
   // normalized luna chart but drives the dilution dynamic in absolute terms.
-  const lunaSupply0 = 350_000_000;
+  const lunaSupply0 = SNAPSHOTS.ust.lunaSupply.value;
   const lunaPrice0 = lunaMarketCap / lunaSupply0;
 
   const pathLen = days + 1;

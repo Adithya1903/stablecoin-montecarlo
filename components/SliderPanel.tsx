@@ -1,11 +1,14 @@
 "use client";
 
+import { SNAPSHOTS } from "@/lib/snapshots";
 import type { SimulationParams } from "@/lib/types";
 
 type Props = {
   params: SimulationParams;
   onChange: (next: SimulationParams) => void;
   selectedId?: string;
+  /** Live 365d realized daily vol of the coin's underlying, if fetched. */
+  realizedVol?: number | null;
 };
 
 type Preset = {
@@ -74,7 +77,7 @@ const PRESETS: Preset[] = [
     patch: {
       fundingRateVol: 0.0003,
       fundingRateShock: 0,
-      reserveFund: 50_000_000,
+      reserveFund: SNAPSHOTS.usde.reserveFund.value,
     },
   },
   {
@@ -83,7 +86,7 @@ const PRESETS: Preset[] = [
     patch: {
       fundingRateVol: 0.001,
       fundingRateShock: -0.15,
-      reserveFund: 50_000_000,
+      reserveFund: SNAPSHOTS.usde.reserveFund.value,
     },
   },
   {
@@ -92,7 +95,7 @@ const PRESETS: Preset[] = [
     patch: {
       fundingRateVol: 0.003,
       fundingRateShock: -0.3,
-      reserveFund: 30_000_000,
+      reserveFund: 30_000_000, // stressed: below the snapshot reserve
     },
   },
   {
@@ -147,7 +150,12 @@ const PRESETS: Preset[] = [
   },
 ];
 
-export function SliderPanel({ params, onChange, selectedId }: Props) {
+export function SliderPanel({
+  params,
+  onChange,
+  selectedId,
+  realizedVol = null,
+}: Props) {
   const patch = (p: Partial<SimulationParams>) =>
     onChange({ ...params, ...p });
 
@@ -311,12 +319,12 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
           />
           <Slider
             label="Reserve Fund"
-            value={params.reserveFund ?? 50_000_000}
+            value={params.reserveFund ?? SNAPSHOTS.usde.reserveFund.value}
             min={10_000_000}
             max={200_000_000}
             step={5_000_000}
-            display={`$${((params.reserveFund ?? 50_000_000) / 1_000_000).toFixed(0)}M`}
-            subtitle="Ethena's insurance fund. Drains during negative funding."
+            display={`$${((params.reserveFund ?? SNAPSHOTS.usde.reserveFund.value) / 1_000_000).toFixed(0)}M`}
+            subtitle={`Ethena's insurance fund (as of ${SNAPSHOTS.usde.reserveFund.asOf}). Drains during negative funding.`}
             onChange={(v) => patch({ reserveFund: v })}
           />
           <Slider
@@ -332,13 +340,17 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
       ) : (
         <>
           <Slider
-            label="ETH Volatility"
+            label="Volatility"
             value={params.volatility}
             min={0.01}
             max={0.15}
             step={0.005}
             display={pct(params.volatility)}
-            subtitle="Historical average is ~4%. Doubles during market panics."
+            subtitle={
+              realizedVol !== null
+                ? `Live 365d realized vol: ${(realizedVol * 100).toFixed(1)}% daily (default). Doubles during market panics.`
+                : "Historical average is ~4%. Doubles during market panics."
+            }
             onChange={(v) => patch({ volatility: v })}
           />
 

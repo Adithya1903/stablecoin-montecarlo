@@ -9,6 +9,8 @@ export type StablecoinStatus = "active" | "deprecated" | "collapsed";
 export type CollateralAsset = { asset: string; weight: number };
 export type ReserveComponent = { type: string; percentage: number };
 
+import { SNAPSHOTS } from "./snapshots";
+
 export type StablecoinConfig = {
   id: string;
   name: string;
@@ -52,13 +54,9 @@ export const STABLECOINS: StablecoinConfig[] = [
     description:
       "MakerDAO's multi-collateral stablecoin. ~65% ETH/stETH, ~35% USDC via the Peg Stability Module.",
     status: "active",
-    collateralAssets: [
-      { asset: "ETH", weight: 0.4 },
-      { asset: "wstETH", weight: 0.25 },
-      { asset: "USDC", weight: 0.35 },
-    ],
-    defaultCR: 1.5,
-    defaultLiqThreshold: 1.45,
+    collateralAssets: [...SNAPSHOTS.dai.collateral.value],
+    defaultCR: SNAPSHOTS.dai.defaultCR.value,
+    defaultLiqThreshold: SNAPSHOTS.dai.defaultLiqThreshold.value,
     defillamaId: "5",
   },
   {
@@ -72,9 +70,9 @@ export const STABLECOINS: StablecoinConfig[] = [
     description:
       "Liquity v1 — ETH-only collateral, 110% minimum CR, no governance, immutable contracts.",
     status: "active",
-    collateralAssets: [{ asset: "ETH", weight: 1.0 }],
-    defaultCR: 1.1,
-    defaultLiqThreshold: 1.1,
+    collateralAssets: [...SNAPSHOTS.lusd.collateral.value],
+    defaultCR: SNAPSHOTS.lusd.minCR.value,
+    defaultLiqThreshold: SNAPSHOTS.lusd.minCR.value,
     defillamaId: "8",
   },
   {
@@ -86,16 +84,11 @@ export const STABLECOINS: StablecoinConfig[] = [
     mechanism: "overcollateralized",
     chain: "ethereum",
     description:
-      "Aave's native stablecoin, minted against any supported Aave collateral with asset-specific CRs.",
+      "Aave's native stablecoin, minted against any supported Aave collateral with asset-specific CRs. (Simulated as a simplified ETH/BTC/LINK basket — see lib/snapshots.ts.)",
     status: "active",
-    collateralAssets: [
-      { asset: "ETH", weight: 0.45 },
-      { asset: "wstETH", weight: 0.25 },
-      { asset: "USDC", weight: 0.15 },
-      { asset: "other", weight: 0.15 },
-    ],
-    defaultCR: 1.5,
-    defaultLiqThreshold: 1.4,
+    collateralAssets: [...SNAPSHOTS.gho.collateral.value],
+    defaultCR: SNAPSHOTS.gho.defaultCR.value,
+    defaultLiqThreshold: SNAPSHOTS.gho.defaultLiqThreshold.value,
     defillamaId: "118",
   },
   {
@@ -109,12 +102,9 @@ export const STABLECOINS: StablecoinConfig[] = [
     description:
       "BIMA Labs' Bitcoin-backed stablecoin collateralized by BTC and Babylon-staked BTC (stBTC).",
     status: "active",
-    collateralAssets: [
-      { asset: "BTC", weight: 0.6 },
-      { asset: "stBTC", weight: 0.4 },
-    ],
-    defaultCR: 2.25,
-    defaultLiqThreshold: 1.6,
+    collateralAssets: [...SNAPSHOTS.usbd.collateral.value],
+    defaultCR: SNAPSHOTS.usbd.defaultCR.value,
+    defaultLiqThreshold: SNAPSHOTS.usbd.defaultLiqThreshold.value,
     defillamaId: "253",
   },
 
@@ -131,7 +121,7 @@ export const STABLECOINS: StablecoinConfig[] = [
       "Delta-neutral synthetic dollar: long ETH/BTC spot hedged by equivalent short perp positions.",
     status: "active",
     underlyingAsset: "ETH",
-    reserveFund: 50_000_000,
+    reserveFund: SNAPSHOTS.usde.reserveFund.value,
     defillamaId: "146",
   },
 
@@ -147,10 +137,7 @@ export const STABLECOINS: StablecoinConfig[] = [
     description:
       "Circle's regulated USD-backed stablecoin, reserves held in T-bills and bank deposits.",
     status: "active",
-    reserveComposition: [
-      { type: "T-bills", percentage: 80 },
-      { type: "Bank deposits", percentage: 20 },
-    ],
+    reserveComposition: [...SNAPSHOTS.usdc.reserveComposition.value],
     regulated: true,
     defillamaId: "2",
   },
@@ -165,11 +152,7 @@ export const STABLECOINS: StablecoinConfig[] = [
     description:
       "Largest stablecoin by market cap; reserve composition has historically been debated.",
     status: "active",
-    reserveComposition: [
-      { type: "T-bills", percentage: 75 },
-      { type: "Cash & equivalents", percentage: 10 },
-      { type: "Other", percentage: 15 },
-    ],
+    reserveComposition: [...SNAPSHOTS.usdt.reserveComposition.value],
     regulated: false,
     defillamaId: "1",
   },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { SNAPSHOTS } from "@/lib/snapshots";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
 
 type Props = {
@@ -253,7 +254,7 @@ function renderSetup(
     p.reserveFund !== undefined ||
     p.fundingRateShock !== undefined;
   if (isUsde) {
-    const reserve = p.reserveFund ?? 50_000_000;
+    const reserve = p.reserveFund ?? SNAPSHOTS.usde.reserveFund.value;
     const shock = p.fundingRateShock ?? 0;
     const fundVol = (p.fundingRateVol ?? 0.0005) * 100;
     return [
@@ -808,7 +809,7 @@ function renderSuggestions(
     p.reserveFund !== undefined ||
     p.fundingRateShock !== undefined;
   if (isUsde) {
-    const reserve = p.reserveFund ?? 50_000_000;
+    const reserve = p.reserveFund ?? SNAPSHOTS.usde.reserveFund.value;
     return [
       <ul key="list" className="list-disc space-y-2 pl-5">
         <li key="res">
