@@ -261,6 +261,19 @@ export function DashboardClient({
     fetchError,
   ]);
 
+  // Per-mechanism display baseline. Paths are reserve dollars for USDe,
+  // peg prices (~$1) for fiat/UST, and collateral-basket dollars otherwise —
+  // medianPath[0] is the true day-0 value on every model (including GHO,
+  // whose basket start is not the ETH spot price).
+  const displayStart = run ? run.result.medianPath[0] : underlyingPrice;
+  const displayFormat = isUsde
+    ? formatUsdCompact
+    : isFiat
+      ? (n: number) => `$${n.toFixed(3)}`
+      : isUst
+        ? (n: number) => `$${n.toFixed(2)}`
+        : (n: number) => `$${n.toFixed(0)}`;
+
   const isLusd = selectedId === "lusd";
   const liqPrice = useMemo(() => {
     if (isLusd) {
@@ -423,13 +436,7 @@ export function DashboardClient({
             <>
               <SimulationChart
                 result={run.result}
-                currentPrice={
-                  isUsde
-                    ? (run.params.reserveFund ?? 50_000_000)
-                    : isFiat || isUst
-                      ? 1.0
-                      : underlyingPrice
-                }
+                currentPrice={displayStart}
                 liquidationThreshold={run.params.liquidationThreshold}
                 collateralRatio={run.params.collateralRatio}
                 elapsedMs={run.elapsedMs}
@@ -478,12 +485,14 @@ export function DashboardClient({
               )}
               <ResultsPanel
                 result={run.result}
-                currentPrice={underlyingPrice}
+                currentPrice={displayStart}
+                formatValue={displayFormat}
               />
               <ScenarioAnalysis
                 params={run.params}
                 result={run.result}
                 ethPrice={underlyingPrice}
+                startValue={displayStart}
               />
               {pending && (
                 <p className="font-mono text-xs text-muted">

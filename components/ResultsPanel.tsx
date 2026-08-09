@@ -5,10 +5,14 @@ import type { SimulationResult } from "@/lib/types";
 
 type Props = {
   result: SimulationResult;
+  /** Day-0 baseline in the paths' own units (spot, basket value, reserve $, or peg $1). */
   currentPrice: number;
+  /** Formats values in the paths' units. Default: whole dollars. */
+  formatValue?: (n: number) => string;
 };
 
-export function ResultsPanel({ result, currentPrice }: Props) {
+export function ResultsPanel({ result, currentPrice, formatValue }: Props) {
+  const fmt = formatValue ?? ((n: number) => `$${n.toFixed(0)}`);
   const stats = useMemo(
     () => computeStats(result, currentPrice),
     [result, currentPrice]
@@ -29,7 +33,7 @@ export function ResultsPanel({ result, currentPrice }: Props) {
         <Stat
           label="Worst 1% drawdown"
           value={`${(stats.worst1pctDrawdown * 100).toFixed(1)}%`}
-          sub={`avg final $${stats.worst1pctAvgPrice.toFixed(0)}`}
+          sub={`avg final ${fmt(stats.worst1pctAvgPrice)}`}
         />
         <Stat
           label="Avg time-to-liq"
@@ -46,14 +50,15 @@ export function ResultsPanel({ result, currentPrice }: Props) {
         />
         <Stat
           label="Median final"
-          value={`$${stats.medianFinal.toFixed(0)}`}
-          sub={`start $${currentPrice.toFixed(0)}`}
+          value={fmt(stats.medianFinal)}
+          sub={`start ${fmt(currentPrice)}`}
         />
       </div>
 
       <Histogram
         finalPrices={stats.finalPrices}
         currentPrice={currentPrice}
+        fmt={fmt}
       />
     </div>
   );
@@ -131,9 +136,11 @@ function computeStats(result: SimulationResult, currentPrice: number): Stats {
 function Histogram({
   finalPrices,
   currentPrice,
+  fmt,
 }: {
   finalPrices: number[];
   currentPrice: number;
+  fmt: (n: number) => string;
 }) {
   const bins = 28;
   const { counts, min, max, maxCount } = useMemo(() => {
@@ -171,7 +178,7 @@ function Histogram({
         <div
           className="absolute top-0 bottom-0 w-px bg-cream/60"
           style={{ left: `${startFrac * 100}%` }}
-          title={`start $${currentPrice.toFixed(0)}`}
+          title={`start ${fmt(currentPrice)}`}
         />
         <div className="flex h-full items-end gap-px px-1">
           {counts.map((c, i) => (
@@ -185,8 +192,8 @@ function Histogram({
         </div>
       </div>
       <div className="mt-1 flex justify-between font-mono text-[10px] text-muted">
-        <span>${min.toFixed(0)}</span>
-        <span>${max.toFixed(0)}</span>
+        <span>{fmt(min)}</span>
+        <span>{fmt(max)}</span>
       </div>
     </div>
   );

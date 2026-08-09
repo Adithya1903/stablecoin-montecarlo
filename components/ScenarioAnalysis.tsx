@@ -6,13 +6,22 @@ import type { SimulationParams, SimulationResult } from "@/lib/types";
 type Props = {
   params: SimulationParams;
   result: SimulationResult;
+  /** Underlying collateral spot (ETH or BTC) — used only in collateral-model prose. */
   ethPrice: number;
+  /** Day-0 baseline in the paths' own units (defaults to ethPrice). */
+  startValue?: number;
 };
 
-export function ScenarioAnalysis({ params, result, ethPrice }: Props) {
+export function ScenarioAnalysis({
+  params,
+  result,
+  ethPrice,
+  startValue,
+}: Props) {
+  const baseline = startValue ?? ethPrice;
   const stats = useMemo(
-    () => computeStats(result, ethPrice),
-    [result, ethPrice]
+    () => computeStats(result, baseline),
+    [result, baseline]
   );
 
   const buckets = useMemo(
@@ -52,7 +61,7 @@ export function ScenarioAnalysis({ params, result, ethPrice }: Props) {
           title="What happened"
           animKey={buckets.outcome}
         >
-          {renderOutcome(params, result, stats, ethPrice, liqPrice, buffer)}
+          {renderOutcome(params, result, stats, ethPrice, baseline, liqPrice, buffer)}
           {(result.recoveryModeCount ?? 0) > 0 && (
             <p>
               <HiAccent tone="warn">Recovery Mode</HiAccent> activated in{" "}
@@ -191,6 +200,99 @@ function renderSetup(
   const liq = p.liquidationThreshold * 100;
   const paragraphs: React.ReactNode[] = [];
 
+  // Non-collateral mechanisms return early — their paths are peg prices or
+  // reserve dollars, so the ETH-spot framing below does not apply.
+  const isUst =
+    p.initialSellPressure !== undefined ||
+    p.reflexivityFactor !== undefined ||
+    p.lunaStartMarketCap !== undefined;
+  if (isUst) {
+    const sell = (p.initialSellPressure ?? 0.05) * 100;
+    const refl = p.reflexivityFactor ?? 3;
+    const cap = p.lunaStartMarketCap ?? 30_000_000_000;
+    return [
+      <p key="ust-1">
+        This simulation demonstrates the <Hi>death spiral</Hi> inherent in
+        algorithmic stablecoins backed only by a sister token. On day 1,{" "}
+        <Hi>{sell.toFixed(0)}%</Hi> of UST supply is dumped into the market,
+        backed by a <Hi>${(cap / 1_000_000_000).toFixed(0)}B</Hi> LUNA float.
+      </p>,
+      <p key="ust-2">
+        The <Hi>reflexivity factor</Hi> is the key parameter. At{" "}
+        <Hi>{refl.toFixed(1)}×</Hi>, a 1% UST depeg causes a{" "}
+        <HiAccent tone="bad">{refl.toFixed(1)}%</HiAccent> drop in LUNA.
+        That reduces UST&apos;s backing, deepening the depeg, which drops
+        LUNA further — a self-reinforcing loop with no external collateral
+        to break it.
+      </p>,
+    ];
+  }
+
+  const isUsde =
+    p.fundingRateVol !== undefined ||
+    p.reserveFund !== undefined ||
+    p.fundingRateShock !== undefined;
+  if (isUsde) {
+    const reserve = p.reserveFund ?? 50_000_000;
+    const shock = p.fundingRateShock ?? 0;
+    const fundVol = (p.fundingRateVol ?? 0.02) * 100;
+    return [
+      <p key="usde-1">
+        Unlike overcollateralized stablecoins, USDe&apos;s risk is <Hi>not</Hi>{" "}
+        about collateral price drops. Ethena holds equal long spot and short
+        perps positions, so price moves cancel out.
+      </p>,
+      <p key="usde-2">
+        The risk is <Hi>funding rates going negative</Hi>. When the market
+        turns bearish, short positions PAY instead of earning. Ethena&apos;s{" "}
+        <Hi>${(reserve / 1_000_000).toFixed(0)}M</Hi> reserve fund absorbs
+        these costs at <Hi>{fundVol.toFixed(2)}%</Hi> daily funding-rate vol
+        {shock < 0 ? (
+          <>
+            {" "}
+            with a forced day-1 shock of{" "}
+            <HiAccent tone="bad">{(shock * 100).toFixed(0)}% APR</HiAccent>.
+          </>
+        ) : (
+          <>.</>
+        )}
+      </p>,
+    ];
+  }
+
+  const isFiat =
+    p.eventProbability !== undefined ||
+    p.baseLiquidity !== undefined ||
+    p.redemptionSeverity !== undefined;
+  if (isFiat) {
+    const eventProb = (p.eventProbability ?? 0.0001) * 100;
+    const severity = (p.redemptionSeverity ?? 0.1) * 100;
+    const effLiq =
+      (p.baseLiquidity ?? 0.86) * (p.reserveLiquidity ?? 1.0) * 100;
+    return [
+      <p key="fiat-1">
+        The peg holds at <Hi>$1.00</Hi> until a <Hi>confidence event</Hi>{" "}
+        (bank failure, regulatory action, audit scare) triggers mass
+        redemptions. Each day carries a{" "}
+        <Hi>{eventProb.toFixed(3)}%</Hi> chance of such an event
+        {p.forceDay1Event ? (
+          <>
+            {" "}
+            — and one is <HiAccent tone="bad">forced on day 1</HiAccent>
+          </>
+        ) : null}
+        .
+      </p>,
+      <p key="fiat-2">
+        During an event, <Hi>{severity.toFixed(0)}%</Hi> of supply attempts
+        to redeem against a reserve basket with{" "}
+        <Hi>{effLiq.toFixed(0)}%</Hi> effective liquidity. If liquid
+        reserves can&apos;t cover same-day redemptions, secondary markets
+        clear below par until slower assets are sold.
+      </p>,
+    ];
+  }
+
   const isBaseline =
     p.initialCrash === 0 && p.volatility >= 0.03 && p.volatility <= 0.055;
 
@@ -219,70 +321,6 @@ function renderSetup(
         liquidation triggers at <Hi>{formatUsd(liqPrice)}</Hi>.
       </p>
     );
-  }
-
-  const isUst =
-    p.initialSellPressure !== undefined ||
-    p.reflexivityFactor !== undefined ||
-    p.lunaStartMarketCap !== undefined;
-  if (isUst) {
-    const sell = (p.initialSellPressure ?? 0.05) * 100;
-    const refl = p.reflexivityFactor ?? 3;
-    const cap = p.lunaStartMarketCap ?? 30_000_000_000;
-    paragraphs.push(
-      <p key="ust-1">
-        This simulation demonstrates the <Hi>death spiral</Hi> inherent in
-        algorithmic stablecoins backed only by a sister token. On day 1,{" "}
-        <Hi>{sell.toFixed(0)}%</Hi> of UST supply is dumped into the market,
-        backed by a <Hi>${(cap / 1_000_000_000).toFixed(0)}B</Hi> LUNA float.
-      </p>
-    );
-    paragraphs.push(
-      <p key="ust-2">
-        The <Hi>reflexivity factor</Hi> is the key parameter. At{" "}
-        <Hi>{refl.toFixed(1)}×</Hi>, a 1% UST depeg causes a{" "}
-        <HiAccent tone="bad">{refl.toFixed(1)}%</HiAccent> drop in LUNA.
-        That reduces UST&apos;s backing, deepening the depeg, which drops
-        LUNA further — a self-reinforcing loop with no external collateral
-        to break it.
-      </p>
-    );
-    return paragraphs;
-  }
-
-  const isUsde =
-    p.fundingRateVol !== undefined ||
-    p.reserveFund !== undefined ||
-    p.fundingRateShock !== undefined;
-  if (isUsde) {
-    const reserve = p.reserveFund ?? 50_000_000;
-    const shock = p.fundingRateShock ?? 0;
-    const vol = (p.fundingRateVol ?? 0.02) * 100;
-    paragraphs.push(
-      <p key="usde-1">
-        Unlike overcollateralized stablecoins, USDe&apos;s risk is <Hi>not</Hi>{" "}
-        about collateral price drops. Ethena holds equal long spot and short
-        perps positions, so price moves cancel out.
-      </p>
-    );
-    paragraphs.push(
-      <p key="usde-2">
-        The risk is <Hi>funding rates going negative</Hi>. When the market
-        turns bearish, short positions PAY instead of earning. Ethena&apos;s{" "}
-        <Hi>${(reserve / 1_000_000).toFixed(0)}M</Hi> reserve fund absorbs
-        these costs at <Hi>{vol.toFixed(1)}%</Hi> daily funding-rate vol
-        {shock < 0 ? (
-          <>
-            {" "}
-            with a forced day-1 shock of{" "}
-            <HiAccent tone="bad">{(shock * 100).toFixed(0)}% APR</HiAccent>.
-          </>
-        ) : (
-          <>.</>
-        )}
-      </p>
-    );
-    return paragraphs;
   }
 
   const corr = p.correlation;
@@ -420,6 +458,7 @@ function renderOutcome(
   result: SimulationResult,
   stats: Stats,
   ethPrice: number,
+  baseline: number,
   liqPrice: number,
   buffer: number
 ) {
@@ -578,7 +617,7 @@ function renderOutcome(
 
   if (bucket === "moderate") {
     const medianDrawdown =
-      ((ethPrice - stats.medianFinal) / ethPrice) * 100;
+      ((baseline - stats.medianFinal) / baseline) * 100;
     return (
       <p>
         This is a <HiAccent tone="warn">meaningful risk</HiAccent> scenario.{" "}
@@ -848,15 +887,15 @@ type Stats = {
   globalMinPrice: number;
 };
 
-function computeStats(result: SimulationResult, ethPrice: number): Stats {
+function computeStats(result: SimulationResult, baseline: number): Stats {
   const n = result.paths.length;
   if (n === 0) {
     return {
-      medianFinal: ethPrice,
-      worst1pctAvgPrice: ethPrice,
+      medianFinal: baseline,
+      worst1pctAvgPrice: baseline,
       worst1pctDrawdown: 0,
       avgDaysToLiq: null,
-      globalMinPrice: ethPrice,
+      globalMinPrice: baseline,
     };
   }
 
@@ -868,13 +907,13 @@ function computeStats(result: SimulationResult, ethPrice: number): Stats {
     for (const p of path) if (p < globalMin) globalMin = p;
   }
   const sorted = finalPrices.slice().sort((a, b) => a - b);
-  const medianFinal = sorted[Math.floor(n / 2)] ?? ethPrice;
+  const medianFinal = sorted[Math.floor(n / 2)] ?? baseline;
 
   const worstCount = Math.max(1, Math.floor(n * 0.01));
   let worstSum = 0;
   for (let i = 0; i < worstCount; i++) worstSum += sorted[i];
   const worst1pctAvgPrice = worstSum / worstCount;
-  const worst1pctDrawdown = (ethPrice - worst1pctAvgPrice) / ethPrice;
+  const worst1pctDrawdown = (baseline - worst1pctAvgPrice) / baseline;
 
   let daysSum = 0;
   let daysCount = 0;
