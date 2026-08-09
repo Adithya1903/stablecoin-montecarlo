@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SimulationResult } from "@/lib/types";
 
 type Props = {
@@ -32,6 +32,23 @@ export function SimulationChart({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // Bumped by the ResizeObserver so the draw effect re-runs at the new width.
+  const [resizeTick, setResizeTick] = useState(0);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    let lastWidth = wrap.clientWidth;
+    const ro = new ResizeObserver(() => {
+      const w = wrap.clientWidth;
+      if (w !== lastWidth) {
+        lastWidth = w;
+        setResizeTick((t) => t + 1);
+      }
+    });
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, []);
 
   const liqPrice =
     thresholdOverride !== undefined
@@ -69,7 +86,7 @@ export function SimulationChart({
       fmt,
       threshLabel
     );
-  }, [result, currentPrice, liqPrice, fmt, threshLabel]);
+  }, [result, currentPrice, liqPrice, fmt, threshLabel, resizeTick]);
 
   return (
     <div className="space-y-4">

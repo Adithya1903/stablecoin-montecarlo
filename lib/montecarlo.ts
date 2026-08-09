@@ -1,5 +1,24 @@
 import type { SimulationParams, SimulationResult } from "./types";
 
+/** Thrown for parameter values no simulator can run with (e.g. zero paths). */
+export class InvalidParamsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidParamsError";
+  }
+}
+
+function assertSimCount(params: SimulationParams): void {
+  if (
+    !Number.isFinite(params.numSimulations) ||
+    params.numSimulations < 1
+  ) {
+    throw new InvalidParamsError(
+      `numSimulations must be at least 1 (got ${params.numSimulations})`
+    );
+  }
+}
+
 let spareNormal: number | null = null;
 
 export function randomNormal(mean = 0, stdDev = 1): number {
@@ -35,6 +54,7 @@ export function simulatePaths(
   currentPrice: number,
   params: SimulationParams
 ): SimulationResult {
+  assertSimCount(params);
   const {
     volatility,
     days,
@@ -115,6 +135,7 @@ export function simulateDAI(
   ethPrice: number,
   params: SimulationParams
 ): SimulationResult {
+  assertSimCount(params);
   const shock = params.usdcShock ?? 0;
   if (shock === 0) return simulatePaths(ethPrice, params);
 
@@ -216,6 +237,7 @@ export function simulateLUSD(
   ethPrice: number,
   params: SimulationParams
 ): SimulationResult {
+  assertSimCount(params);
   const {
     volatility,
     days,
@@ -315,6 +337,7 @@ export function simulateLUSD(
  * assets are sold. Depeg flag fires the first day peg < 0.97.
  */
 export function simulateFiatBacked(params: SimulationParams): SimulationResult {
+  assertSimCount(params);
   const days = params.days;
   const numSimulations = params.numSimulations;
   const eventProb = params.eventProbability ?? 0.0001;
@@ -408,6 +431,7 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
  * downstream UI treats the "price" axis as dollars of reserve.
  */
 export function simulateUSDe(params: SimulationParams): SimulationResult {
+  assertSimCount(params);
   const days = params.days;
   const numSimulations = params.numSimulations;
   // Daily funding σ as a fraction of notional. Real perp funding daily σ is
@@ -493,6 +517,7 @@ export function simulateGHO(
   btcPrice: number,
   params: SimulationParams
 ): SimulationResult {
+  assertSimCount(params);
   const {
     volatility,
     days,
@@ -613,6 +638,7 @@ export function simulateGHO(
  * contains LUNA price normalized to its starting value.
  */
 export function simulateUST(params: SimulationParams): SimulationResult {
+  assertSimCount(params);
   const days = params.days;
   const numSimulations = params.numSimulations;
   const initialSellPressure = params.initialSellPressure ?? 0.05;
@@ -735,6 +761,7 @@ export function simulateOvercollateralizedBTC(
   btcPrice: number,
   params: SimulationParams
 ): SimulationResult {
+  assertSimCount(params);
   const {
     volatility,
     days,
