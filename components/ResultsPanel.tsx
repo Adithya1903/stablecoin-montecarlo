@@ -19,6 +19,7 @@ export function ResultsPanel({ result, currentPrice, formatValue }: Props) {
   );
 
   const pct = result.depegProbability * 100;
+  const [ciLo, ciHi] = result.depegProbabilityCI;
   const color =
     pct < 5 ? "text-emerald-400" : pct < 15 ? "text-amber-400" : "text-red-400";
 
@@ -29,6 +30,7 @@ export function ResultsPanel({ result, currentPrice, formatValue }: Props) {
           label="Depeg probability"
           value={`${pct.toFixed(2)}%`}
           valueClass={`${color} text-3xl`}
+          sub={`95% CI ${(ciLo * 100).toFixed(2)}–${(ciHi * 100).toFixed(2)}%`}
         />
         <Stat
           label="Worst 1% drawdown"

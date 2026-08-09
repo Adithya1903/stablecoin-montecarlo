@@ -1,3 +1,4 @@
+import { Rng, randomSeed, wilsonCI } from "./rng";
 import type { SimulationParams, SimulationResult } from "./types";
 
 /** Thrown for parameter values no simulator can run with (e.g. zero paths). */
@@ -19,27 +20,6 @@ function assertSimCount(params: SimulationParams): void {
   }
 }
 
-let spareNormal: number | null = null;
-
-export function randomNormal(mean = 0, stdDev = 1): number {
-  if (spareNormal !== null) {
-    const z = spareNormal;
-    spareNormal = null;
-    return mean + stdDev * z;
-  }
-  let u = 0;
-  do {
-    u = Math.random();
-  } while (u === 0);
-  const v = Math.random();
-  const mag = Math.sqrt(-2 * Math.log(u));
-  const theta = 2 * Math.PI * v;
-  const z0 = mag * Math.cos(theta);
-  const z1 = mag * Math.sin(theta);
-  spareNormal = z1;
-  return mean + stdDev * z0;
-}
-
 function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return NaN;
   const pos = (sorted.length - 1) * q;
@@ -55,6 +35,8 @@ export function simulatePaths(
   params: SimulationParams
 ): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
+  const rng = new Rng(seed);
   const {
     volatility,
     days,
@@ -80,7 +62,7 @@ export function simulatePaths(
       if (d === 1 && initialCrash !== 0) {
         price = price * (1 + initialCrash);
       } else {
-        price = price * (1 + randomNormal(0, volatility));
+        price = price * (1 + rng.normal(0, volatility));
       }
       path[d] = price;
 
@@ -117,6 +99,8 @@ export function simulatePaths(
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,
@@ -137,7 +121,9 @@ export function simulateDAI(
 ): SimulationResult {
   assertSimCount(params);
   const shock = params.usdcShock ?? 0;
-  if (shock === 0) return simulatePaths(ethPrice, params);
+  const seed = params.seed ?? randomSeed();
+  if (shock === 0) return simulatePaths(ethPrice, { ...params, seed });
+  const rng = new Rng(seed);
 
   const {
     volatility,
@@ -172,10 +158,10 @@ export function simulateDAI(
 
     for (let d = 1; d <= days; d++) {
       if (d === 1 && initialCrash !== 0) eth = eth * (1 + initialCrash);
-      else eth = eth * (1 + randomNormal(0, volatility));
+      else eth = eth * (1 + rng.normal(0, volatility));
 
       if (d === 1) usdc = 1.0 + shock;
-      else usdc = usdc + USDC_REVERT * (1.0 - usdc) + randomNormal(0, USDC_NOISE);
+      else usdc = usdc + USDC_REVERT * (1.0 - usdc) + rng.normal(0, USDC_NOISE);
       if (usdc < 0) usdc = 0;
 
       const eff = ETH_WEIGHT * eth + USDC_WEIGHT * ethPrice * usdc;
@@ -214,6 +200,8 @@ export function simulateDAI(
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,
@@ -238,6 +226,8 @@ export function simulateLUSD(
   params: SimulationParams
 ): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
+  const rng = new Rng(seed);
   const {
     volatility,
     days,
@@ -264,7 +254,7 @@ export function simulateLUSD(
 
     for (let d = 1; d <= days; d++) {
       if (d === 1 && initialCrash !== 0) price = price * (1 + initialCrash);
-      else price = price * (1 + randomNormal(0, volatility));
+      else price = price * (1 + rng.normal(0, volatility));
       path[d] = price;
 
       const moveFactor = price / ethPrice;
@@ -312,6 +302,8 @@ export function simulateLUSD(
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,
@@ -338,6 +330,8 @@ export function simulateLUSD(
  */
 export function simulateFiatBacked(params: SimulationParams): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
+  const rng = new Rng(seed);
   const days = params.days;
   const numSimulations = params.numSimulations;
   const eventProb = params.eventProbability ?? 0.0001;
@@ -364,7 +358,7 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
 
     for (let d = 1; d <= days; d++) {
       const eventToday =
-        (d === 1 && forceDay1) || Math.random() < eventProb;
+        (d === 1 && forceDay1) || rng.next() < eventProb;
 
       if (eventToday) {
         if (effLiq >= severity) {
@@ -373,7 +367,7 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
         } else {
           currentPeg = effLiq / severity;
         }
-        recoveryDaysLeft = 3 + Math.floor(Math.random() * 5);
+        recoveryDaysLeft = 3 + Math.floor(rng.next() * 5);
       } else if (recoveryDaysLeft > 0) {
         const step = (1.0 - currentPeg) / recoveryDaysLeft;
         currentPeg = currentPeg + step;
@@ -415,6 +409,8 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,
@@ -432,6 +428,8 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
  */
 export function simulateUSDe(params: SimulationParams): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
+  const rng = new Rng(seed);
   const days = params.days;
   const numSimulations = params.numSimulations;
   // Daily funding σ as a fraction of notional. Real perp funding daily σ is
@@ -460,7 +458,7 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
       const dailyRate =
         d === 1 && shockApr !== 0
           ? shockApr / 365
-          : randomNormal(meanDaily, fundingVol);
+          : rng.normal(meanDaily, fundingVol);
       reserve += totalSupply * dailyRate;
       if (reserve <= 0) {
         if (firstDepeg === null) firstDepeg = d;
@@ -496,6 +494,8 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,
@@ -518,6 +518,8 @@ export function simulateGHO(
   params: SimulationParams
 ): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
+  const rng = new Rng(seed);
   const {
     volatility,
     days,
@@ -575,9 +577,9 @@ export function simulateGHO(
         link = link * (1 + initialCrash);
       } else {
         const [ze, zb, zl] = applyCorr(
-          randomNormal(0, 1),
-          randomNormal(0, 1),
-          randomNormal(0, 1)
+          rng.normal(0, 1),
+          rng.normal(0, 1),
+          rng.normal(0, 1)
         );
         eth = eth * (1 + ze * volatility);
         btc = btc * (1 + zb * btcVol);
@@ -619,6 +621,8 @@ export function simulateGHO(
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,
@@ -639,6 +643,8 @@ export function simulateGHO(
  */
 export function simulateUST(params: SimulationParams): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
+  const rng = new Rng(seed);
   const days = params.days;
   const numSimulations = params.numSimulations;
   const initialSellPressure = params.initialSellPressure ?? 0.05;
@@ -672,7 +678,7 @@ export function simulateUST(params: SimulationParams): SimulationResult {
       if (d === 1) {
         const sellAmount = ustSupply * initialSellPressure;
         const impact = sellAmount / (ustSupply * 0.1); // 10% depth
-        ustPrice = Math.max(0.01, 1.0 - impact + randomNormal(0, 0.02));
+        ustPrice = Math.max(0.01, 1.0 - impact + rng.normal(0, 0.02));
       } else {
         if (ustPrice < 1.0) {
           const redeemAmount = (1.0 - ustPrice) * ustSupply * 0.05;
@@ -685,7 +691,7 @@ export function simulateUST(params: SimulationParams): SimulationResult {
         const ustBacking = lunaPrice * lunaSupply;
         ustPrice = Math.min(
           1.0,
-          ustBacking / ustSupply + randomNormal(0, 0.01)
+          ustBacking / ustSupply + rng.normal(0, 0.01)
         );
         if (ustPrice < 0.001) ustPrice = 0.001;
       }
@@ -729,6 +735,8 @@ export function simulateUST(params: SimulationParams): SimulationResult {
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath: ustQ.med,
@@ -762,6 +770,7 @@ export function simulateOvercollateralizedBTC(
   params: SimulationParams
 ): SimulationResult {
   assertSimCount(params);
+  const seed = params.seed ?? randomSeed();
   const {
     volatility,
     days,
@@ -773,7 +782,8 @@ export function simulateOvercollateralizedBTC(
     lstWeights,
   } = params;
 
-  if (!lstBasisRisk) return simulatePaths(btcPrice, params);
+  if (!lstBasisRisk) return simulatePaths(btcPrice, { ...params, seed });
+  const rng = new Rng(seed);
 
   const wBtc = lstWeights?.btc ?? 0.6;
   const wStBtc = lstWeights?.stBtc ?? 0.4;
@@ -801,7 +811,7 @@ export function simulateOvercollateralizedBTC(
       // BTC step
       const btcPrev = btc;
       if (d === 1 && initialCrash !== 0) btc = btc * (1 + initialCrash);
-      else btc = btc * (1 + randomNormal(0, volatility));
+      else btc = btc * (1 + rng.normal(0, volatility));
       const btcDayReturn = (btc - btcPrev) / btcPrev;
 
       // Jump probability/magnitude conditioned on BTC drop
@@ -816,9 +826,9 @@ export function simulateOvercollateralizedBTC(
       }
 
       const meanReversion = MEAN_REV * (1.0 - ratio);
-      const shock = randomNormal(0, NOISE_SD);
+      const shock = rng.normal(0, NOISE_SD);
       let nextRatio = ratio + meanReversion + shock;
-      if (Math.random() < jumpProb) nextRatio += jumpMag;
+      if (rng.next() < jumpProb) nextRatio += jumpMag;
       if (nextRatio < FLOOR) nextRatio = FLOOR;
       ratio = nextRatio;
 
@@ -858,6 +868,8 @@ export function simulateOvercollateralizedBTC(
     paths,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
+    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
+    seed,
     depegDays,
     worstPath: paths[worstIdx],
     medianPath,

@@ -15,10 +15,12 @@ import {
   simulateUSDe,
   simulateUST,
 } from "@/lib/montecarlo";
+import { randomSeed } from "@/lib/rng";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
 import type { SimulationParams, SimulationResult } from "@/lib/types";
 
 const DEFAULTS: SimulationParams = {
+  seed: 42,
   volatility: 0.04,
   days: 30,
   numSimulations: 10000,
@@ -440,6 +442,9 @@ export function DashboardClient({
                 liquidationThreshold={run.params.liquidationThreshold}
                 collateralRatio={run.params.collateralRatio}
                 elapsedMs={run.elapsedMs}
+                onReroll={() =>
+                  setParams((prev) => ({ ...prev, seed: randomSeed() }))
+                }
                 thresholdOverride={
                   isUsde ? 0 : isFiat ? 0.97 : isUst ? 0.5 : undefined
                 }
@@ -468,6 +473,8 @@ export function DashboardClient({
                     paths: run.result.luna.paths,
                     depegCount: 0,
                     depegProbability: 0,
+                    depegProbabilityCI: [0, 0],
+                    seed: run.result.seed,
                     depegDays: run.result.depegDays,
                     worstPath: run.result.luna.worstPath,
                     medianPath: run.result.luna.medianPath,

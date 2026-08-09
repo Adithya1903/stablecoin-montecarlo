@@ -1,4 +1,6 @@
 export type SimulationParams = {
+  /** RNG seed — same seed + same params reproduces identical results. Omit for a random run. */
+  seed?: number;
   volatility: number; // daily std dev (e.g., 0.04 = 4%)
   days: number; // simulation horizon (7-90)
   numSimulations: number; // 10000
@@ -51,6 +53,10 @@ export type SimulationResult = {
   paths: number[][]; // [simulation][day] = price
   depegCount: number;
   depegProbability: number;
+  /** Wilson 95% interval on depegProbability. */
+  depegProbabilityCI: [number, number];
+  /** Seed the run actually used (either params.seed or a fresh random one). */
+  seed: number;
   /** Per-path day-of-first-breach; null if the path never depegged. */
   depegDays: (number | null)[];
   worstPath: number[];

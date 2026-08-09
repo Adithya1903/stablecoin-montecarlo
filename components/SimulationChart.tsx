@@ -17,6 +17,8 @@ type Props = {
   thresholdLabel?: string;
   /** Formats axis numbers. Default: whole dollars. */
   formatValue?: (n: number) => string;
+  /** Re-roll: rerun with a fresh seed. Omit to hide the button (e.g. secondary charts). */
+  onReroll?: () => void;
 };
 
 export function SimulationChart({
@@ -28,6 +30,7 @@ export function SimulationChart({
   thresholdOverride,
   thresholdLabel,
   formatValue,
+  onReroll,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -106,8 +109,11 @@ export function SimulationChart({
       </div>
       <ChartFooter
         depegProbability={result.depegProbability}
+        depegProbabilityCI={result.depegProbabilityCI}
+        seed={result.seed}
         pathCount={result.paths.length}
         elapsedMs={elapsedMs}
+        onReroll={onReroll}
       />
     </div>
   );
@@ -257,14 +263,22 @@ function drawLine(
 
 function ChartFooter({
   depegProbability,
+  depegProbabilityCI,
+  seed,
   pathCount,
   elapsedMs,
+  onReroll,
 }: {
   depegProbability: number;
+  depegProbabilityCI: [number, number];
+  seed: number;
   pathCount: number;
   elapsedMs: number | null;
+  onReroll?: () => void;
 }) {
   const pct = depegProbability * 100;
+  const ciHalf =
+    ((depegProbabilityCI[1] - depegProbabilityCI[0]) / 2) * 100;
   const color =
     pct < 5 ? "text-emerald-400" : pct < 15 ? "text-amber-400" : "text-red-400";
   return (
@@ -275,6 +289,9 @@ function ChartFooter({
         </p>
         <p className={`mt-1 font-mono text-3xl font-semibold ${color}`}>
           {pct.toFixed(2)}%
+          <span className="ml-2 align-middle text-sm font-normal text-muted">
+            ± {ciHalf.toFixed(2)}%
+          </span>
         </p>
       </div>
       <div>
@@ -291,6 +308,24 @@ function ChartFooter({
         </p>
         <p className="mt-1 font-mono text-lg text-cream">
           {elapsedMs !== null ? `${elapsedMs.toFixed(0)} ms` : "—"}
+        </p>
+      </div>
+      <div className="ml-auto">
+        <p className="text-right text-[11px] uppercase tracking-[0.18em] text-muted">
+          Seed
+        </p>
+        <p className="mt-1 flex items-center gap-2 font-mono text-xs text-muted">
+          <span>{seed}</span>
+          {onReroll && (
+            <button
+              onClick={onReroll}
+              title="Re-roll: rerun with a fresh random seed"
+              aria-label="Re-roll simulation"
+              className="rounded-md border border-stroke bg-charcoal px-2 py-1 text-sm transition hover:border-cream/60 hover:bg-stroke/40"
+            >
+              🎲
+            </button>
+          )}
         </p>
       </div>
     </div>
