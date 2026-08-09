@@ -1,14 +1,3 @@
-export type Stablecoin = {
-  id: "dai" | "usde" | "crvusd";
-  name: string;
-  mechanism: string; // 'crypto-collateralized' | 'delta-neutral' | 'soft-liquidation'
-  currentCollateralRatio: number;
-  liquidationThreshold: number;
-  circulatingSupply: number;
-  pegPrice: number; // should be ~1.00
-  collateralAssets: string[];
-};
-
 export type SimulationParams = {
   volatility: number; // daily std dev (e.g., 0.04 = 4%)
   days: number; // simulation horizon (7-90)
@@ -86,45 +75,8 @@ export type SimulationResult = {
 };
 
 // ---------------------------------------------------------------------------
-// Legacy client-facing types (still referenced by app/page.tsx and the mock
-// snapshot helpers in lib/data.ts). Safe to delete once the page is migrated
-// to the new Stablecoin model.
+// Live market-data types (lib/data.ts fetchers).
 // ---------------------------------------------------------------------------
-
-export type StablecoinId = "DAI" | "USDe" | "crvUSD";
-
-export interface MarketSnapshot {
-  id: StablecoinId;
-  name: string;
-  symbol: string;
-  priceUsd: number;
-  marketCapUsd?: number;
-  updatedAt: string;
-}
-
-// ---------------------------------------------------------------------------
-// Data-layer types (from Prompt 2).
-// ---------------------------------------------------------------------------
-
-export interface StablecoinMetadata {
-  id: string;
-  name: string;
-  symbol: string;
-  pegMechanism: string;
-  circulatingUsd: number;
-  price: number | null;
-}
-
-export interface StablecoinHistoryPoint {
-  /** Unix seconds. */
-  date: number;
-  totalCirculatingUsd: number;
-}
-
-export interface StablecoinsData {
-  coins: StablecoinMetadata[];
-  history: StablecoinHistoryPoint[];
-}
 
 export interface EthMarketData {
   spotUsd: number;

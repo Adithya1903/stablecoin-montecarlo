@@ -17,7 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Stablecoin Depeg Lab",
   description:
-    "Monte Carlo stress paths for DAI, USDe, and crvUSD with configurable parameters.",
+    "Monte Carlo depeg stress paths for eight stablecoin mechanisms — DAI, LUSD, GHO, USBD, USDe, USDC, USDT, and UST — with configurable parameters.",
 };
 
 export default function RootLayout({

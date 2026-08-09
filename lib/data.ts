@@ -1,10 +1,4 @@
-import type {
-  EthMarketData,
-  FundingRateStats,
-  MarketSnapshot,
-  StablecoinId,
-  StablecoinsData,
-} from "./types";
+import type { EthMarketData, FundingRateStats } from "./types";
 
 const REVALIDATE_SECONDS = 300;
 
@@ -18,56 +12,6 @@ async function fetchJson<T>(url: string): Promise<T> {
     );
   }
   return (await res.json()) as T;
-}
-
-interface LlamaStablecoinsResponse {
-  peggedAssets: Array<{
-    id: string;
-    name: string;
-    symbol: string;
-    pegType?: string;
-    pegMechanism?: string;
-    circulating?: Record<string, number | undefined>;
-    price?: number | null;
-  }>;
-}
-
-interface LlamaHistoryEntry {
-  date: string | number;
-  totalCirculatingUSD?: Record<string, number | undefined>;
-}
-
-export async function fetchStablecoinsData(): Promise<StablecoinsData> {
-  const [list, history] = await Promise.all([
-    fetchJson<LlamaStablecoinsResponse>(
-      "https://stablecoins.llama.fi/stablecoins"
-    ),
-    fetchJson<LlamaHistoryEntry[]>(
-      "https://stablecoins.llama.fi/stablecoincharts/all"
-    ),
-  ]);
-
-  const coins = list.peggedAssets.map((a) => {
-    const peggedUsd = a.circulating?.peggedUSD;
-    return {
-      id: a.id,
-      name: a.name,
-      symbol: a.symbol,
-      pegMechanism: a.pegMechanism ?? a.pegType ?? "unknown",
-      circulatingUsd: typeof peggedUsd === "number" ? peggedUsd : 0,
-      price: a.price ?? null,
-    };
-  });
-
-  const normalizedHistory = history.map((h) => {
-    const usd = h.totalCirculatingUSD?.peggedUSD;
-    return {
-      date: typeof h.date === "string" ? Number(h.date) : h.date,
-      totalCirculatingUsd: typeof usd === "number" ? usd : 0,
-    };
-  });
-
-  return { coins, history: normalizedHistory };
 }
 
 interface CgSimplePriceResponse {
@@ -170,60 +114,4 @@ export async function fetchEthFundingRates(): Promise<FundingRateStats> {
       : 0;
   const stdDev = Math.sqrt(variance);
   return { rates, mean, stdDev };
-}
-
-const BASE: Record<
-  StablecoinId,
-  Omit<MarketSnapshot, "priceUsd" | "updatedAt">
-> = {
-  DAI: {
-    id: "DAI",
-    name: "Dai Stablecoin",
-    symbol: "DAI",
-    marketCapUsd: 5_300_000_000,
-  },
-  USDe: {
-    id: "USDe",
-    name: "Ethena USDe",
-    symbol: "USDe",
-    marketCapUsd: 3_100_000_000,
-  },
-  crvUSD: {
-    id: "crvUSD",
-    name: "crvUSD",
-    symbol: "crvUSD",
-    marketCapUsd: 160_000_000,
-  },
-};
-
-/** Simulated network latency for demo purposes. */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Fetches the latest (mock) market snapshot for a stablecoin.
- * Replace the implementation with a real HTTP client when wiring an API.
- */
-export async function fetchStablecoinSnapshot(
-  id: StablecoinId
-): Promise<MarketSnapshot> {
-  await delay(180 + Math.floor(Math.random() * 220));
-  const row = BASE[id];
-  const jitter = 1 + (Math.random() - 0.5) * 0.0006;
-  const anchors: Record<StablecoinId, number> = {
-    DAI: 0.9998,
-    USDe: 1.0001,
-    crvUSD: 0.9995,
-  };
-  return {
-    ...row,
-    priceUsd: anchors[id] * jitter,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-export async function fetchAllStablecoinSnapshots(): Promise<MarketSnapshot[]> {
-  const ids: StablecoinId[] = ["DAI", "USDe", "crvUSD"];
-  return Promise.all(ids.map((id) => fetchStablecoinSnapshot(id)));
 }
