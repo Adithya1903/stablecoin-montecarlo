@@ -427,11 +427,11 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
         <Slider
           label="Correlation"
           value={params.correlation ?? 0.7}
-          min={0}
+          min={-0.4}
           max={1}
           step={0.1}
           display={(params.correlation ?? 0.7).toFixed(1)}
-          subtitle="How likely ETH/BTC/LINK crash together. 0 = independent (diversification works). 1 = everything crashes together. Crypto is typically ~0.6–0.8."
+          subtitle="How likely ETH/BTC/LINK crash together. Negative = hedged legs, 0 = independent, 1 = everything crashes together. Crypto is typically ~0.6–0.8."
           onChange={(v) => patch({ correlation: v })}
         />
       )}

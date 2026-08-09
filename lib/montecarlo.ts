@@ -1,3 +1,4 @@
+import { ReturnEngine } from "./returns";
 import { Rng, randomSeed, wilsonCI } from "./rng";
 import type { SimulationParams, SimulationResult } from "./types";
 
@@ -57,12 +58,16 @@ export function simulatePaths(
     path[0] = currentPrice;
     let price = currentPrice;
     let firstDepegDay: number | null = null;
+    const engine = new ReturnEngine(rng, [volatility], {
+      nu: params.nu,
+      ewmaLambda: params.ewmaLambda,
+    });
 
     for (let d = 1; d <= days; d++) {
       if (d === 1 && initialCrash !== 0) {
-        price = price * (1 + initialCrash);
+        price = price * engine.crashStep(0, initialCrash)[0];
       } else {
-        price = price * (1 + rng.normal(0, volatility));
+        price = price * engine.step().factors[0];
       }
       path[d] = price;
 
@@ -138,6 +143,11 @@ export function simulateDAI(
   const USDC_WEIGHT = 0.35;
   const USDC_NOISE = 0.001;
   const USDC_REVERT = 1 / 7; // ~7-day mean reversion toward $1
+  // ETH and the USDC peg are correlated (SVB week was a joint event):
+  // daily draws share this equicorrelation, and a forced day-1 USDC
+  // shock drags ETH by (1+shock)^β as a common-stress co-move.
+  const ETH_USDC_RHO = 0.3;
+  const STRESS_BETA = 0.3;
 
   const pathLen = days + 1;
   const paths: number[][] = new Array(numSimulations);
@@ -155,13 +165,28 @@ export function simulateDAI(
     let eth = ethPrice;
     let usdc = 1.0;
     let firstDepeg: number | null = null;
+    const engine = new ReturnEngine(rng, [volatility, USDC_NOISE], {
+      rho: ETH_USDC_RHO,
+      nu: params.nu,
+      ewmaLambda: params.ewmaLambda,
+    });
 
     for (let d = 1; d <= days; d++) {
-      if (d === 1 && initialCrash !== 0) eth = eth * (1 + initialCrash);
-      else eth = eth * (1 + rng.normal(0, volatility));
-
-      if (d === 1) usdc = 1.0 + shock;
-      else usdc = usdc + USDC_REVERT * (1.0 - usdc) + rng.normal(0, USDC_NOISE);
+      if (d === 1) {
+        usdc = 1.0 + shock;
+        if (initialCrash !== 0) {
+          eth = eth * engine.crashStep(0, initialCrash)[0];
+        } else {
+          eth =
+            eth *
+            engine.step().factors[0] *
+            Math.pow(1 + shock, STRESS_BETA);
+        }
+      } else {
+        const { z, factors } = engine.step();
+        eth = eth * factors[0];
+        usdc = usdc + USDC_REVERT * (1.0 - usdc) + USDC_NOISE * z[1];
+      }
       if (usdc < 0) usdc = 0;
 
       const eff = ETH_WEIGHT * eth + USDC_WEIGHT * ethPrice * usdc;
@@ -251,10 +276,15 @@ export function simulateLUSD(
     let price = ethPrice;
     let firstDepeg: number | null = null;
     let firstRecovery: number | null = null;
+    const engine = new ReturnEngine(rng, [volatility], {
+      nu: params.nu,
+      ewmaLambda: params.ewmaLambda,
+    });
 
     for (let d = 1; d <= days; d++) {
-      if (d === 1 && initialCrash !== 0) price = price * (1 + initialCrash);
-      else price = price * (1 + rng.normal(0, volatility));
+      if (d === 1 && initialCrash !== 0)
+        price = price * engine.crashStep(0, initialCrash)[0];
+      else price = price * engine.step().factors[0];
       path[d] = price;
 
       const moveFactor = price / ethPrice;
@@ -505,12 +535,12 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
 }
 
 /**
- * GHO sim. Multi-collateral basket (50% ETH, 30% BTC, 20% LINK) with a
- * correlated-returns engine. The correlation slider sets the pairwise
- * correlation for a 3×3 matrix with 1s on the diagonal; we take the
- * Cholesky factor L and produce correlated daily returns as `L · z` for
- * i.i.d. standard-normal z. Edge cases rho=0 and rho=1 are handled
- * directly to avoid numeric blow-ups in L.
+ * GHO sim. Multi-collateral basket (50% ETH, 30% BTC, 20% LINK) driven by
+ * the shared ReturnEngine: log-space Student-t returns with a pairwise
+ * equicorrelation set by the correlation slider (valid range −0.5 < ρ ≤ 1
+ * for three assets — negative ρ expresses hedged baskets). A forced day-1
+ * crash hits ETH exactly and transmits to BTC/LINK through the
+ * correlation instead of being applied identically to all three.
  */
 export function simulateGHO(
   ethPrice: number,
@@ -528,7 +558,7 @@ export function simulateGHO(
     collateralRatio,
     liquidationThreshold,
   } = params;
-  const rho = Math.max(0, Math.min(1, params.correlation ?? 0.7));
+  const rho = params.correlation ?? 0.7; // engine clamps to (−1/2, 1]
 
   const btcVol = 0.75 * volatility;
   const linkVol = 1.5 * volatility;
@@ -536,23 +566,6 @@ export function simulateGHO(
   const wBtc = 0.3;
   const wLink = 0.2;
   const linkPrice = 15; // notional LINK start price; cancels out of ratio
-
-  // Cholesky of [[1,r,r],[r,1,r],[r,r,1]]
-  //   L11 = sqrt(1-r²), L21 = r, L22 = r(1-r)/L11, L33 = sqrt(1-r²-L22²)
-  // Special-case r=1 (perfectly correlated) and r=0 (independent) so the
-  // division by L11 stays well-conditioned.
-  const applyCorr = (z0: number, z1: number, z2: number): [number, number, number] => {
-    if (rho >= 0.999) return [z0, z0, z0];
-    if (rho <= 0.001) return [z0, z1, z2];
-    const L11 = Math.sqrt(1 - rho * rho);
-    const L22 = (rho * (1 - rho)) / L11;
-    const L33 = Math.sqrt(Math.max(0, 1 - rho * rho - L22 * L22));
-    return [
-      z0,
-      rho * z0 + L11 * z1,
-      rho * z0 + L22 * z1 + L33 * z2,
-    ];
-  };
 
   const pathLen = days + 1;
   const paths: number[][] = new Array(numSimulations);
@@ -569,22 +582,22 @@ export function simulateGHO(
     let btc = btcPrice;
     let link = linkPrice;
     let firstDepeg: number | null = null;
+    const engine = new ReturnEngine(rng, [volatility, btcVol, linkVol], {
+      rho,
+      nu: params.nu,
+      ewmaLambda: params.ewmaLambda,
+    });
 
     for (let d = 1; d <= days; d++) {
+      let f: number[];
       if (d === 1 && initialCrash !== 0) {
-        eth = eth * (1 + initialCrash);
-        btc = btc * (1 + initialCrash);
-        link = link * (1 + initialCrash);
+        f = engine.crashStep(0, initialCrash);
       } else {
-        const [ze, zb, zl] = applyCorr(
-          rng.normal(0, 1),
-          rng.normal(0, 1),
-          rng.normal(0, 1)
-        );
-        eth = eth * (1 + ze * volatility);
-        btc = btc * (1 + zb * btcVol);
-        link = link * (1 + zl * linkVol);
+        f = engine.step().factors;
       }
+      eth = eth * f[0];
+      btc = btc * f[1];
+      link = link * f[2];
       const eff = wEth * eth + wBtc * btc + wLink * link;
       path[d] = eff;
 
@@ -806,12 +819,17 @@ export function simulateOvercollateralizedBTC(
     let btc = btcPrice;
     let ratio = 1.0;
     let firstDepeg: number | null = null;
+    const engine = new ReturnEngine(rng, [volatility], {
+      nu: params.nu,
+      ewmaLambda: params.ewmaLambda,
+    });
 
     for (let d = 1; d <= days; d++) {
       // BTC step
       const btcPrev = btc;
-      if (d === 1 && initialCrash !== 0) btc = btc * (1 + initialCrash);
-      else btc = btc * (1 + rng.normal(0, volatility));
+      if (d === 1 && initialCrash !== 0)
+        btc = btc * engine.crashStep(0, initialCrash)[0];
+      else btc = btc * engine.step().factors[0];
       const btcDayReturn = (btc - btcPrev) / btcPrev;
 
       // Jump probability/magnitude conditioned on BTC drop
@@ -828,7 +846,10 @@ export function simulateOvercollateralizedBTC(
       const meanReversion = MEAN_REV * (1.0 - ratio);
       const shock = rng.normal(0, NOISE_SD);
       let nextRatio = ratio + meanReversion + shock;
-      if (rng.next() < jumpProb) nextRatio += jumpMag;
+      // Randomized jump magnitude (σ = 40% of the mean) instead of a
+      // deterministic table value.
+      if (rng.next() < jumpProb)
+        nextRatio += rng.normal(jumpMag, 0.4 * Math.abs(jumpMag));
       if (nextRatio < FLOOR) nextRatio = FLOOR;
       ratio = nextRatio;
 

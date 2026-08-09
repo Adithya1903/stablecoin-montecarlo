@@ -1,6 +1,10 @@
 export type SimulationParams = {
   /** RNG seed — same seed + same params reproduces identical results. Omit for a random run. */
   seed?: number;
+  /** Student-t degrees of freedom for return draws (integer ≥ 3). Default 5; ≥ 100 → Gaussian. */
+  nu?: number;
+  /** EWMA λ for volatility clustering (e.g. 0.94). Omit for constant volatility. */
+  ewmaLambda?: number;
   volatility: number; // daily std dev (e.g., 0.04 = 4%)
   days: number; // simulation horizon (7-90)
   numSimulations: number; // 10000

@@ -92,10 +92,30 @@ export function ScenarioAnalysis({
 
         <Section title="Real-world context" animKey="static">
           <p>
-            This simulation uses geometric Brownian motion with{" "}
-            <Hi>normally distributed returns</Hi>. Real markets have fat tails
-            — extreme crashes happen more often than the normal distribution
-            predicts. Actual depeg risk may be higher than shown.
+            Collateral prices follow <Hi>log-space returns</Hi> with{" "}
+            {(params.nu ?? 5) >= 100 ? (
+              <>
+                <Hi>Gaussian innovations</Hi> (comparison mode — real markets
+                have fatter tails than this)
+              </>
+            ) : (
+              <>
+                <Hi>Student-t innovations (ν = {params.nu ?? 5})</Hi>, so
+                extreme moves occur substantially more often than a normal
+                distribution predicts — matching crypto&apos;s fat tails.
+                Correlated assets share each day&apos;s tail shock, so joint
+                crashes cluster
+              </>
+            )}
+            {params.ewmaLambda !== undefined ? (
+              <>
+                , and volatility follows an{" "}
+                <Hi>EWMA (λ = {params.ewmaLambda})</Hi> so crash days raise
+                subsequent volatility.
+              </>
+            ) : (
+              <>. Volatility is held constant within a run.</>
+            )}
           </p>
           <p className="mt-2">
             The model does not simulate <Hi>liquidation cascades</Hi> (where
