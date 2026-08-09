@@ -60,5 +60,8 @@ export function wilsonCI(successes: number, n: number): [number, number] {
   const center = (p + z2n / 2) / denom;
   const half =
     (z / denom) * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-  return [Math.max(0, center - half), Math.min(1, center + half)];
+  // At p̂ = 0 (resp. 1) the exact bound is 0 (resp. 1); clamp float error.
+  const lo = successes === 0 ? 0 : Math.max(0, center - half);
+  const hi = successes === n ? 1 : Math.min(1, center + half);
+  return [lo, hi];
 }

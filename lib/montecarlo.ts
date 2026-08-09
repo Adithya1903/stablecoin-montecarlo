@@ -19,9 +19,18 @@ function assertSimCount(params: SimulationParams): void {
       `numSimulations must be at least 1 (got ${params.numSimulations})`
     );
   }
+  if (!Number.isFinite(params.days) || params.days < 1) {
+    throw new InvalidParamsError(
+      `days must be at least 1 (got ${params.days})`
+    );
+  }
+  if (Number.isNaN(params.volatility)) {
+    throw new InvalidParamsError("volatility must be a number (got NaN)");
+  }
 }
 
-function quantile(sorted: number[], q: number): number {
+/** Linear-interpolation quantile (R type-7 / numpy default) over a sorted array. */
+export function quantile(sorted: number[], q: number): number {
   if (sorted.length === 0) return NaN;
   const pos = (sorted.length - 1) * q;
   const lo = Math.floor(pos);
