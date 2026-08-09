@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InvalidParamsError,
+  pathRow,
   simulateDAI,
   simulateFiatBacked,
   simulateGHO,
@@ -62,8 +63,8 @@ describe("degenerate inputs", () => {
 
   it("valid minimal run still works (1 path, 1 day)", () => {
     const r = simulatePaths(3000, { ...BASE, numSimulations: 1, days: 1 });
-    expect(r.paths).toHaveLength(1);
-    expect(r.paths[0]).toHaveLength(2);
-    expect(r.worstPath).toBe(r.paths[0]);
+    expect(r.paths.numPaths).toBe(1);
+    expect(r.paths.pathLen).toBe(2);
+    expect(r.worstPath).toEqual(pathRow(r.paths, 0));
   });
 });

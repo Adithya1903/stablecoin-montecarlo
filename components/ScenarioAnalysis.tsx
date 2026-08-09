@@ -68,7 +68,7 @@ export function ScenarioAnalysis({
               <HiAccent tone="warn">Recovery Mode</HiAccent> activated in{" "}
               <Hi>
                 {(
-                  ((result.recoveryModeCount ?? 0) / result.paths.length) *
+                  ((result.recoveryModeCount ?? 0) / result.paths.numPaths) *
                   100
                 ).toFixed(1)}
                 %
@@ -488,7 +488,7 @@ function renderOutcome(
     p.reflexivityFactor !== undefined ||
     p.lunaStartMarketCap !== undefined;
   if (isUstOutcome) {
-    const total = result.paths.length;
+    const total = result.paths.numPaths;
     const count = result.depegCount;
     const pct = result.depegProbability * 100;
     let daysSum = 0;
@@ -528,12 +528,14 @@ function renderOutcome(
     p.baseLiquidity !== undefined ||
     p.redemptionSeverity !== undefined;
   if (isFiatOutcome) {
-    const total = result.paths.length;
+    const total = result.paths.numPaths;
     const count = result.depegCount;
     const pct = result.depegProbability * 100;
     let minPeg = Infinity;
-    for (const path of result.paths) {
-      for (const v of path) if (v < minPeg) minPeg = v;
+    {
+      const { data, numPaths, pathLen } = result.paths;
+      const total = numPaths * pathLen;
+      for (let i = 0; i < total; i++) if (data[i] < minPeg) minPeg = data[i];
     }
     if (count === 0) {
       return (
@@ -563,7 +565,7 @@ function renderOutcome(
     p.reserveFund !== undefined ||
     p.fundingRateShock !== undefined;
   if (isUsdeOutcome) {
-    const total = result.paths.length;
+    const total = result.paths.numPaths;
     const count = result.depegCount;
     const pct = result.depegProbability * 100;
     let daysSum = 0;
@@ -598,7 +600,7 @@ function renderOutcome(
     );
   }
 
-  const total = result.paths.length;
+  const total = result.paths.numPaths;
   const count = result.depegCount;
   const pct = result.depegProbability * 100;
   const bucket = outcomeBucket(result.depegProbability);
@@ -909,7 +911,7 @@ type Stats = {
 };
 
 function computeStats(result: SimulationResult, baseline: number): Stats {
-  const n = result.paths.length;
+  const n = result.paths.numPaths;
   if (n === 0) {
     return {
       medianFinal: baseline,
@@ -920,12 +922,15 @@ function computeStats(result: SimulationResult, baseline: number): Stats {
     };
   }
 
+  const { data, pathLen } = result.paths;
   const finalPrices = new Array<number>(n);
   let globalMin = Infinity;
   for (let i = 0; i < n; i++) {
-    const path = result.paths[i];
-    finalPrices[i] = path[path.length - 1];
-    for (const p of path) if (p < globalMin) globalMin = p;
+    finalPrices[i] = data[(i + 1) * pathLen - 1];
+    const base = i * pathLen;
+    for (let d = 0; d < pathLen; d++) {
+      if (data[base + d] < globalMin) globalMin = data[base + d];
+    }
   }
   const sorted = finalPrices.slice().sort((a, b) => a - b);
   const medianFinal = sorted[Math.floor(n / 2)] ?? baseline;

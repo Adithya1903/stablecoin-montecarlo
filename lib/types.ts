@@ -55,8 +55,19 @@ export type SimulationParams = {
   ustSupplyUsd?: number;
 };
 
+/**
+ * Flat row-major path matrix: the value of path `i` on day `d` is
+ * `data[i * pathLen + d]`. One typed array per run — transferable to and
+ * from the simulation worker without cloning ~300k boxed numbers.
+ */
+export type PathMatrix = {
+  data: Float64Array;
+  numPaths: number;
+  pathLen: number;
+};
+
 export type SimulationResult = {
-  paths: number[][]; // [simulation][day] = price
+  paths: PathMatrix;
   depegCount: number;
   depegProbability: number;
   /** Wilson 95% interval on depegProbability. */
@@ -65,6 +76,11 @@ export type SimulationResult = {
   seed: number;
   /** Per-path day-of-first-breach; null if the path never depegged. */
   depegDays: (number | null)[];
+  /**
+   * The path with the deepest intraday minimum (unified across models —
+   * a path that crashed to 0.90 and recovered is worse than one that
+   * drifted to 0.97; six models previously ranked by lowest final value).
+   */
   worstPath: number[];
   /** Per-day median across all paths — synthetic, not a sample path. */
   medianPath: number[];
@@ -78,7 +94,7 @@ export type SimulationResult = {
   recoveryModeAvgDay?: number | null;
   /** UST-only: parallel LUNA paths (normalized to starting price) + derived paths. */
   luna?: {
-    paths: number[][];
+    paths: PathMatrix;
     worstPath: number[];
     medianPath: number[];
     percentile5Path: number[];

@@ -465,6 +465,36 @@ export function SliderPanel({
         />
       )}
 
+      <div className="h-px bg-stroke" />
+
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-muted">
+          Precision
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { n: 10_000, label: "10k paths" },
+            { n: 50_000, label: "50k paths" },
+          ].map(({ n, label }) => (
+            <button
+              key={n}
+              onClick={() => patch({ numSimulations: n })}
+              className={`rounded-md border px-3 py-2 text-xs font-medium transition ${
+                params.numSimulations === n
+                  ? "border-cream bg-stroke/40 text-cream"
+                  : "border-stroke bg-charcoal text-cream hover:border-cream/60 hover:bg-stroke/40"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] leading-snug text-muted">
+          50k paths tighten the confidence interval ~2.2× — the worker keeps
+          the UI responsive either way.
+        </p>
+      </div>
+
       {selectedId === "usbd" && (
         <div className="rounded-md border border-stroke bg-charcoal/60 p-3">
           <label className="flex cursor-pointer items-start gap-2 text-sm text-cream">

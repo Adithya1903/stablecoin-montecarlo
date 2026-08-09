@@ -1,24 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { ResultsPanel } from "@/components/ResultsPanel";
 import { ScenarioAnalysis } from "@/components/ScenarioAnalysis";
 import { SimulationChart } from "@/components/SimulationChart";
 import { SliderPanel } from "@/components/SliderPanel";
 import { StablecoinSelector } from "@/components/StablecoinSelector";
-import {
-  simulateDAI,
-  simulateFiatBacked,
-  simulateGHO,
-  simulateLUSD,
-  simulateOvercollateralizedBTC,
-  simulateUSDe,
-  simulateUST,
-} from "@/lib/montecarlo";
+import { isBtcBacked } from "@/lib/dispatch";
 import { randomSeed } from "@/lib/rng";
 import { SNAPSHOTS } from "@/lib/snapshots";
 import { getStablecoin, type StablecoinConfig } from "@/lib/stablecoins";
-import type { SimulationParams, SimulationResult } from "@/lib/types";
+import { useSimulation } from "@/lib/useSimulation";
+import type { SimulationParams } from "@/lib/types";
 
 const DEFAULTS: SimulationParams = {
   seed: 42,
@@ -30,20 +23,7 @@ const DEFAULTS: SimulationParams = {
   liquidationThreshold: 1.1,
 };
 
-type RunState = {
-  result: SimulationResult;
-  elapsedMs: number;
-  params: SimulationParams;
-};
-
 type Summary = { pegPrice: number | null; marketCapUsd: number };
-
-function isBtcBacked(coin: StablecoinConfig | undefined): boolean {
-  if (!coin?.collateralAssets) return false;
-  return coin.collateralAssets.some(
-    (a) => /^(BTC|stBTC|wBTC)/i.test(a.asset) && a.weight > 0.3
-  );
-}
 
 function lstWeights(
   coin: StablecoinConfig | undefined
@@ -60,22 +40,6 @@ function formatUsdCompact(n: number): string {
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
   return `$${n.toFixed(0)}`;
-}
-
-function validateResult(r: SimulationResult): string | null {
-  if (!(r.depegProbability >= 0 && r.depegProbability <= 1)) {
-    return `depegProbability out of range: ${r.depegProbability}`;
-  }
-  for (let i = 0; i < r.paths.length; i++) {
-    const path = r.paths[i];
-    for (let d = 0; d < path.length; d++) {
-      const v = path[d];
-      if (!Number.isFinite(v) || v < 0) {
-        return `invalid path value at [${i}][${d}] = ${v}`;
-      }
-    }
-  }
-  return null;
 }
 
 export function DashboardClient({
@@ -202,26 +166,16 @@ export function DashboardClient({
     }));
   };
 
-  const [run, setRun] = useState<RunState | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(fetchError);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (fetchError) {
-      setError(fetchError);
-      setPending(false);
-      return;
-    }
+  // Pre-run validation — anything here blocks the worker from spinning.
+  const preError = useMemo(() => {
+    if (fetchError) return fetchError;
     if (
       !isUsde &&
       !isFiat &&
       !isUst &&
       (!Number.isFinite(underlyingPrice) || underlyingPrice <= 0)
     ) {
-      setError(`Invalid ${underlyingLabel} price: ${underlyingPrice}`);
-      setPending(false);
-      return;
+      return `Invalid ${underlyingLabel} price: ${underlyingPrice}`;
     }
     if (
       !isUsde &&
@@ -230,67 +184,34 @@ export function DashboardClient({
       selectedId !== "lusd" &&
       params.liquidationThreshold >= params.collateralRatio
     ) {
-      setError(
-        `Liquidation threshold (${params.liquidationThreshold}) must be below collateral ratio (${params.collateralRatio})`
-      );
-      setPending(false);
-      return;
+      return `Liquidation threshold (${params.liquidationThreshold}) must be below collateral ratio (${params.collateralRatio})`;
     }
-    setPending(true);
-    setError(null);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      try {
-        console.log("[sim] start", { coin: selectedId, underlyingPrice, params });
-        const t0 = performance.now();
-        const result = isUst
-          ? simulateUST(params)
-          : isUsde
-          ? simulateUSDe(params)
-          : isFiat
-            ? simulateFiatBacked(params)
-            : btcBacked
-              ? simulateOvercollateralizedBTC(underlyingPrice, params)
-              : selectedId === "lusd"
-                ? simulateLUSD(underlyingPrice, params)
-                : selectedId === "gho"
-                  ? simulateGHO(ethPrice, btcPrice, params)
-                  : simulateDAI(underlyingPrice, params);
-        const t1 = performance.now();
-        const bad = validateResult(result);
-        if (bad) {
-          console.error("[sim] sanity check failed:", bad);
-          setError(`Sanity check failed: ${bad}`);
-          return;
-        }
-        console.log("[sim] done", {
-          elapsedMs: t1 - t0,
-          depegProbability: result.depegProbability,
-        });
-        setRun({ result, elapsedMs: t1 - t0, params });
-      } catch (e) {
-        console.error("[sim] error", e);
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setPending(false);
-      }
-    }, 300);
-    return () => {
-      if (timer.current) clearTimeout(timer.current);
-    };
+    return null;
   }, [
-    underlyingPrice,
-    underlyingLabel,
-    btcBacked,
+    fetchError,
     isUsde,
     isFiat,
     isUst,
+    underlyingPrice,
+    underlyingLabel,
+    selectedId,
+    params.liquidationThreshold,
+    params.collateralRatio,
+  ]);
+
+  const {
+    run,
+    partial,
+    pending,
+    error: simError,
+  } = useSimulation({
+    coinId: selectedId,
     ethPrice,
     btcPrice,
-    selectedId,
     params,
-    fetchError,
-  ]);
+    enabled: preError === null,
+  });
+  const error = preError ?? simError;
 
   // Per-mechanism display baseline. Paths are reserve dollars for USDe,
   // peg prices (~$1) for fiat/UST, and collateral-basket dollars otherwise —
@@ -350,7 +271,7 @@ export function DashboardClient({
           Stablecoin stress dashboard
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
-          10,000 simulated price paths for{" "}
+          {params.numSimulations.toLocaleString()} simulated price paths for{" "}
           <span className="text-cream">{selected?.name ?? "DAI"}</span>{" "}
           collateral. Pick a stablecoin, then drag the sliders to change
           volatility, shock scenarios, or the buffer between CR and liquidation
@@ -475,14 +396,17 @@ export function DashboardClient({
             <div className="flex h-[400px] items-center justify-center rounded-xl border border-red-500/40 bg-red-500/5 px-6 text-center font-mono text-sm text-red-400">
               {error}
             </div>
-          ) : run ? (
+          ) : run || partial ? (
             <>
               <SimulationChart
-                result={run.result}
+                result={run?.result ?? null}
+                partial={partial}
                 currentPrice={displayStart}
-                liquidationThreshold={run.params.liquidationThreshold}
-                collateralRatio={run.params.collateralRatio}
-                elapsedMs={run.elapsedMs}
+                liquidationThreshold={
+                  (run?.params ?? params).liquidationThreshold
+                }
+                collateralRatio={(run?.params ?? params).collateralRatio}
+                elapsedMs={run?.elapsedMs ?? null}
                 onReroll={() =>
                   setParams((prev) => ({ ...prev, seed: randomSeed() }))
                 }
@@ -508,7 +432,7 @@ export function DashboardClient({
                         : undefined
                 }
               />
-              {isUst && run.result.luna && (
+              {run && isUst && run.result.luna && (
                 <SimulationChart
                   result={{
                     paths: run.result.luna.paths,
@@ -531,26 +455,31 @@ export function DashboardClient({
                   formatValue={(n) => `${(n * 100).toFixed(1)}%`}
                 />
               )}
-              <ResultsPanel
-                result={run.result}
-                currentPrice={displayStart}
-                formatValue={displayFormat}
-              />
-              <ScenarioAnalysis
-                params={run.params}
-                result={run.result}
-                ethPrice={underlyingPrice}
-                startValue={displayStart}
-              />
+              {run && (
+                <>
+                  <ResultsPanel
+                    result={run.result}
+                    currentPrice={displayStart}
+                    formatValue={displayFormat}
+                  />
+                  <ScenarioAnalysis
+                    params={run.params}
+                    result={run.result}
+                    ethPrice={underlyingPrice}
+                    startValue={displayStart}
+                  />
+                </>
+              )}
               {pending && (
                 <p className="font-mono text-xs text-muted">
-                  Running 10,000 simulations…
+                  Running {params.numSimulations.toLocaleString()}{" "}
+                  simulations…
                 </p>
               )}
             </>
           ) : (
             <div className="flex h-[400px] items-center justify-center rounded-xl border border-stroke bg-surface/30 font-mono text-sm text-muted">
-              Running 10,000 simulations…
+              Running {params.numSimulations.toLocaleString()} simulations…
             </div>
           )}
         </div>

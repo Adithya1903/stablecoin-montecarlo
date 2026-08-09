@@ -1,7 +1,7 @@
 import { ReturnEngine } from "./returns";
 import { Rng, randomSeed, wilsonCI } from "./rng";
 import { SNAPSHOTS } from "./snapshots";
-import type { SimulationParams, SimulationResult } from "./types";
+import type { PathMatrix, SimulationParams, SimulationResult } from "./types";
 
 /** Thrown for parameter values no simulator can run with (e.g. zero paths). */
 export class InvalidParamsError extends Error {
@@ -9,6 +9,27 @@ export class InvalidParamsError extends Error {
     super(message);
     this.name = "InvalidParamsError";
   }
+}
+
+/**
+ * Hooks the simulation worker threads through the path loop. Not part of
+ * SimulationParams because callbacks are not structured-cloneable.
+ */
+export type SimHooks = {
+  /**
+   * Called every ~batch paths with the matrix being filled and the count
+   * of completed paths, so callers can stream partial fans. The final
+   * batch is NOT reported — the returned result covers it.
+   */
+  onBatch?: (
+    m: PathMatrix,
+    depegDays: (number | null)[],
+    done: number
+  ) => void;
+};
+
+function batchSize(numSimulations: number): number {
+  return Math.max(1000, Math.ceil(numSimulations / 20));
 }
 
 function assertSimCount(params: SimulationParams): void {
@@ -31,7 +52,7 @@ function assertSimCount(params: SimulationParams): void {
 }
 
 /** Linear-interpolation quantile (R type-7 / numpy default) over a sorted array. */
-export function quantile(sorted: number[], q: number): number {
+export function quantile(sorted: ArrayLike<number>, q: number): number {
   if (sorted.length === 0) return NaN;
   const pos = (sorted.length - 1) * q;
   const lo = Math.floor(pos);
@@ -41,9 +62,76 @@ export function quantile(sorted: number[], q: number): number {
   return sorted[lo] + frac * (sorted[hi] - sorted[lo]);
 }
 
+/** Copy one path out of the matrix as a plain array. */
+export function pathRow(m: PathMatrix, i: number): number[] {
+  return Array.from(m.data.subarray(i * m.pathLen, (i + 1) * m.pathLen));
+}
+
+/**
+ * Per-day p5/median/p95 plus the worst path — the one with the deepest
+ * intraday minimum. Replaces seven near-identical per-simulator blocks.
+ */
+function summarize(m: PathMatrix): {
+  medianPath: number[];
+  percentile5Path: number[];
+  percentile95Path: number[];
+  worstIdx: number;
+} {
+  const { data, numPaths, pathLen } = m;
+  const medianPath = new Array<number>(pathLen);
+  const percentile5Path = new Array<number>(pathLen);
+  const percentile95Path = new Array<number>(pathLen);
+  const column = new Float64Array(numPaths);
+  for (let d = 0; d < pathLen; d++) {
+    for (let i = 0; i < numPaths; i++) column[i] = data[i * pathLen + d];
+    column.sort();
+    percentile5Path[d] = quantile(column, 0.05);
+    medianPath[d] = quantile(column, 0.5);
+    percentile95Path[d] = quantile(column, 0.95);
+  }
+
+  let worstIdx = 0;
+  let worstMin = Infinity;
+  for (let i = 0; i < numPaths; i++) {
+    const base = i * pathLen;
+    let mn = Infinity;
+    for (let d = 0; d < pathLen; d++) {
+      const v = data[base + d];
+      if (v < mn) mn = v;
+    }
+    if (mn < worstMin) {
+      worstMin = mn;
+      worstIdx = i;
+    }
+  }
+  return { medianPath, percentile5Path, percentile95Path, worstIdx };
+}
+
+function buildResult(
+  m: PathMatrix,
+  depegCount: number,
+  depegDays: (number | null)[],
+  seed: number
+): SimulationResult {
+  const s = summarize(m);
+  return {
+    paths: m,
+    depegCount,
+    depegProbability: m.numPaths > 0 ? depegCount / m.numPaths : 0,
+    depegProbabilityCI: wilsonCI(depegCount, m.numPaths),
+    seed,
+    depegDays,
+    worstPath: pathRow(m, s.worstIdx),
+    medianPath: s.medianPath,
+    percentile5Path: s.percentile5Path,
+    percentile95Path: s.percentile95Path,
+  };
+}
+
 export function simulatePaths(
   currentPrice: number,
-  params: SimulationParams
+  params: SimulationParams,
+  hooks?: SimHooks
 ): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
@@ -58,14 +146,18 @@ export function simulatePaths(
   } = params;
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const finalPrices = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = currentPrice;
+    const base = i * pathLen;
+    m.data[base] = currentPrice;
     let price = currentPrice;
     let firstDepegDay: number | null = null;
     const engine = new ReturnEngine(rng, [volatility], {
@@ -79,7 +171,7 @@ export function simulatePaths(
       } else {
         price = price * engine.step().factors[0];
       }
-      path[d] = price;
+      m.data[base + d] = price;
 
       if (firstDepegDay === null) {
         const ratio = (price / currentPrice) * collateralRatio;
@@ -87,41 +179,13 @@ export function simulatePaths(
       }
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepegDay;
-    finalPrices[i] = price;
     if (firstDepegDay !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (finalPrices[i] < finalPrices[worstIdx]) worstIdx = i;
-  }
-
-  return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
-  };
+  return buildResult(m, depegCount, depegDays, seed);
 }
 
 /**
@@ -132,12 +196,13 @@ export function simulatePaths(
  */
 export function simulateDAI(
   ethPrice: number,
-  params: SimulationParams
+  params: SimulationParams,
+  hooks?: SimHooks
 ): SimulationResult {
   assertSimCount(params);
   const shock = params.usdcShock ?? 0;
   const seed = params.seed ?? randomSeed();
-  if (shock === 0) return simulatePaths(ethPrice, { ...params, seed });
+  if (shock === 0) return simulatePaths(ethPrice, { ...params, seed }, hooks);
   const rng = new Rng(seed);
 
   const {
@@ -160,9 +225,13 @@ export function simulateDAI(
   const STRESS_BETA = 0.3;
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const finalEff = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   const startEff = ETH_WEIGHT * ethPrice + USDC_WEIGHT * ethPrice;
@@ -170,8 +239,8 @@ export function simulateDAI(
   // as startEff) so downstream UI keeps a single numeric scale.
 
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = startEff;
+    const base = i * pathLen;
+    m.data[base] = startEff;
     let eth = ethPrice;
     let usdc = 1.0;
     let firstDepeg: number | null = null;
@@ -200,7 +269,7 @@ export function simulateDAI(
       if (usdc < 0) usdc = 0;
 
       const eff = ETH_WEIGHT * eth + USDC_WEIGHT * ethPrice * usdc;
-      path[d] = eff;
+      m.data[base + d] = eff;
 
       if (firstDepeg === null) {
         const ratio = (eff / startEff) * collateralRatio;
@@ -208,41 +277,13 @@ export function simulateDAI(
       }
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepeg;
-    finalEff[i] = path[days];
     if (firstDepeg !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (finalEff[i] < finalEff[worstIdx]) worstIdx = i;
-  }
-
-  return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
-  };
+  return buildResult(m, depegCount, depegDays, seed);
 }
 
 /**
@@ -258,7 +299,8 @@ export function simulateDAI(
  */
 export function simulateLUSD(
   ethPrice: number,
-  params: SimulationParams
+  params: SimulationParams,
+  hooks?: SimHooks
 ): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
@@ -273,16 +315,20 @@ export function simulateLUSD(
   const systemCR0 = params.systemCR ?? 2.5;
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const finalPrices = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
   let recoveryCount = 0;
   let recoverySum = 0;
 
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = ethPrice;
+    const base = i * pathLen;
+    m.data[base] = ethPrice;
     let price = ethPrice;
     let firstDepeg: number | null = null;
     let firstRecovery: number | null = null;
@@ -295,7 +341,7 @@ export function simulateLUSD(
       if (d === 1 && initialCrash !== 0)
         price = price * engine.crashStep(0, initialCrash)[0];
       else price = price * engine.step().factors[0];
-      path[d] = price;
+      m.data[base + d] = price;
 
       const moveFactor = price / ethPrice;
       const userRatio = moveFactor * userCR0;
@@ -311,44 +357,18 @@ export function simulateLUSD(
       }
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepeg;
-    finalPrices[i] = price;
     if (firstDepeg !== null) depegCount++;
     if (firstRecovery !== null) {
       recoveryCount++;
       recoverySum += firstRecovery;
     }
-  }
-
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (finalPrices[i] < finalPrices[worstIdx]) worstIdx = i;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
   return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
+    ...buildResult(m, depegCount, depegDays, seed),
     recoveryModeCount: recoveryCount,
     recoveryModeAvgDay: recoveryCount > 0 ? recoverySum / recoveryCount : null,
   };
@@ -368,7 +388,10 @@ export function simulateLUSD(
  * Peg then linearly recovers to $1 over a random 3–7 days as illiquid
  * assets are sold. Depeg flag fires the first day peg < 0.97.
  */
-export function simulateFiatBacked(params: SimulationParams): SimulationResult {
+export function simulateFiatBacked(
+  params: SimulationParams,
+  hooks?: SimHooks
+): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
   const rng = new Rng(seed);
@@ -383,18 +406,21 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
   const DEPEG = 0.97;
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const minPeg = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = 1.0;
+    const base = i * pathLen;
+    m.data[base] = 1.0;
     let firstDepeg: number | null = null;
     let recoveryDaysLeft = 0;
     let currentPeg = 1.0;
-    let mn = 1.0;
 
     for (let d = 1; d <= days; d++) {
       const eventToday =
@@ -416,47 +442,17 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
         currentPeg = 1.0;
       }
 
-      path[d] = currentPeg;
-      if (currentPeg < mn) mn = currentPeg;
+      m.data[base + d] = currentPeg;
       if (firstDepeg === null && currentPeg < DEPEG) firstDepeg = d;
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepeg;
-    minPeg[i] = mn;
     if (firstDepeg !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  // "Worst" = path with deepest single-day dip
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (minPeg[i] < minPeg[worstIdx]) worstIdx = i;
-  }
-
-  return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
-  };
+  return buildResult(m, depegCount, depegDays, seed);
 }
 
 /**
@@ -473,7 +469,10 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
  * `fundingRateShock` (APR) forces day 1 to that level, after which the
  * spell decays through the same persistence.
  */
-export function simulateUSDe(params: SimulationParams): SimulationResult {
+export function simulateUSDe(
+  params: SimulationParams,
+  hooks?: SimHooks
+): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
   const rng = new Rng(seed);
@@ -493,14 +492,18 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
   const meanDaily = params.fundingMeanDaily ?? fallback.meanDaily;
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const finalReserve = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = startReserve;
+    const base = i * pathLen;
+    m.data[base] = startReserve;
     let reserve = startReserve;
     let firstDepeg: number | null = null;
     let funding = shockApr !== 0 ? shockApr / 365 : meanDaily;
@@ -515,44 +518,16 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
         if (firstDepeg === null) firstDepeg = d;
         reserve = 0;
       }
-      path[d] = reserve;
+      m.data[base + d] = reserve;
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepeg;
-    finalReserve[i] = path[days];
     if (firstDepeg !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (finalReserve[i] < finalReserve[worstIdx]) worstIdx = i;
-  }
-
-  return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
-  };
+  return buildResult(m, depegCount, depegDays, seed);
 }
 
 /**
@@ -566,7 +541,8 @@ export function simulateUSDe(params: SimulationParams): SimulationResult {
 export function simulateGHO(
   ethPrice: number,
   btcPrice: number,
-  params: SimulationParams
+  params: SimulationParams,
+  hooks?: SimHooks
 ): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
@@ -590,16 +566,20 @@ export function simulateGHO(
   const linkPrice = 15; // notional LINK start price; cancels out of ratio
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const finalEff = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   const startEff = wEth * ethPrice + wBtc * btcPrice + wLink * linkPrice;
 
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = startEff;
+    const base = i * pathLen;
+    m.data[base] = startEff;
     let eth = ethPrice;
     let btc = btcPrice;
     let link = linkPrice;
@@ -621,7 +601,7 @@ export function simulateGHO(
       btc = btc * f[1];
       link = link * f[2];
       const eff = wEth * eth + wBtc * btc + wLink * link;
-      path[d] = eff;
+      m.data[base + d] = eff;
 
       if (firstDepeg === null) {
         const ratio = (eff / startEff) * collateralRatio;
@@ -629,41 +609,13 @@ export function simulateGHO(
       }
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepeg;
-    finalEff[i] = path[days];
     if (firstDepeg !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (finalEff[i] < finalEff[worstIdx]) worstIdx = i;
-  }
-
-  return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
-  };
+  return buildResult(m, depegCount, depegDays, seed);
 }
 
 /**
@@ -676,7 +628,10 @@ export function simulateGHO(
  * shrinks — a self-reinforcing loop. Paths return UST price; `luna.paths`
  * contains LUNA price normalized to its starting value.
  */
-export function simulateUST(params: SimulationParams): SimulationResult {
+export function simulateUST(
+  params: SimulationParams,
+  hooks?: SimHooks
+): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
   const rng = new Rng(seed);
@@ -695,16 +650,24 @@ export function simulateUST(params: SimulationParams): SimulationResult {
   const lunaPrice0 = lunaMarketCap / lunaSupply0;
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
-  const lunaPaths: number[][] = new Array(numSimulations);
+  const ustM: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
+  const lunaM: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   for (let i = 0; i < numSimulations; i++) {
-    const ust = new Array<number>(pathLen);
-    const luna = new Array<number>(pathLen);
-    ust[0] = 1.0;
-    luna[0] = 1.0;
+    const base = i * pathLen;
+    ustM.data[base] = 1.0;
+    lunaM.data[base] = 1.0;
     let ustPrice = 1.0;
     let lunaPrice = lunaPrice0;
     let lunaSupply = lunaSupply0;
@@ -732,58 +695,38 @@ export function simulateUST(params: SimulationParams): SimulationResult {
         if (ustPrice < 0.001) ustPrice = 0.001;
       }
 
-      ust[d] = ustPrice;
-      luna[d] = lunaPrice / lunaPrice0;
+      ustM.data[base + d] = ustPrice;
+      lunaM.data[base + d] = lunaPrice / lunaPrice0;
       if (firstDepeg === null && ustPrice < FULL_COLLAPSE) firstDepeg = d;
     }
 
-    paths[i] = ust;
-    lunaPaths[i] = luna;
     depegDays[i] = firstDepeg;
     if (firstDepeg !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(ustM, depegDays, i + 1);
   }
 
-  const computePercentiles = (src: number[][]) => {
-    const med = new Array<number>(pathLen);
-    const p5 = new Array<number>(pathLen);
-    const p95 = new Array<number>(pathLen);
-    const column = new Array<number>(numSimulations);
-    for (let d = 0; d < pathLen; d++) {
-      for (let i = 0; i < numSimulations; i++) column[i] = src[i][d];
-      const sorted = column.slice().sort((a, b) => a - b);
-      p5[d] = quantile(sorted, 0.05);
-      med[d] = quantile(sorted, 0.5);
-      p95[d] = quantile(sorted, 0.95);
-    }
-    return { med, p5, p95 };
-  };
-
-  const ustQ = computePercentiles(paths);
-  const lunaQ = computePercentiles(lunaPaths);
-
-  // Worst = lowest UST final price; use same index for LUNA for coherence.
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (paths[i][days] < paths[worstIdx][days]) worstIdx = i;
-  }
+  const ustS = summarize(ustM);
+  const lunaS = summarize(lunaM);
 
   return {
-    paths,
+    paths: ustM,
     depegCount,
     depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
     depegProbabilityCI: wilsonCI(depegCount, numSimulations),
     seed,
     depegDays,
-    worstPath: paths[worstIdx],
-    medianPath: ustQ.med,
-    percentile5Path: ustQ.p5,
-    percentile95Path: ustQ.p95,
+    worstPath: pathRow(ustM, ustS.worstIdx),
+    medianPath: ustS.medianPath,
+    percentile5Path: ustS.percentile5Path,
+    percentile95Path: ustS.percentile95Path,
     luna: {
-      paths: lunaPaths,
-      worstPath: lunaPaths[worstIdx],
-      medianPath: lunaQ.med,
-      percentile5Path: lunaQ.p5,
-      percentile95Path: lunaQ.p95,
+      paths: lunaM,
+      // Same index as the worst UST path for cross-chart coherence.
+      worstPath: pathRow(lunaM, ustS.worstIdx),
+      medianPath: lunaS.medianPath,
+      percentile5Path: lunaS.percentile5Path,
+      percentile95Path: lunaS.percentile95Path,
     },
   };
 }
@@ -803,7 +746,8 @@ export function simulateUST(params: SimulationParams): SimulationResult {
  */
 export function simulateOvercollateralizedBTC(
   btcPrice: number,
-  params: SimulationParams
+  params: SimulationParams,
+  hooks?: SimHooks
 ): SimulationResult {
   assertSimCount(params);
   const seed = params.seed ?? randomSeed();
@@ -818,7 +762,8 @@ export function simulateOvercollateralizedBTC(
     lstWeights,
   } = params;
 
-  if (!lstBasisRisk) return simulatePaths(btcPrice, { ...params, seed });
+  if (!lstBasisRisk)
+    return simulatePaths(btcPrice, { ...params, seed }, hooks);
   const rng = new Rng(seed);
 
   const wBtc = lstWeights?.btc ?? 0.6;
@@ -830,15 +775,19 @@ export function simulateOvercollateralizedBTC(
   const FLOOR = 0.01; // Babylon-exploit scenarios must be representable
 
   const pathLen = days + 1;
-  const paths: number[][] = new Array(numSimulations);
+  const m: PathMatrix = {
+    data: new Float64Array(numSimulations * pathLen),
+    numPaths: numSimulations,
+    pathLen,
+  };
   const depegDays: (number | null)[] = new Array(numSimulations);
-  const finalEff = new Float64Array(numSimulations);
+  const batch = batchSize(numSimulations);
   let depegCount = 0;
 
   const startEff = btcPrice; // ratio starts at 1, so effective == btcPrice
   for (let i = 0; i < numSimulations; i++) {
-    const path = new Array<number>(pathLen);
-    path[0] = startEff;
+    const base = i * pathLen;
+    m.data[base] = startEff;
     let btc = btcPrice;
     let ratio = 1.0;
     let firstDepeg: number | null = null;
@@ -877,7 +826,7 @@ export function simulateOvercollateralizedBTC(
       ratio = nextRatio;
 
       const eff = wBtc * btc + wStBtc * btc * ratio;
-      path[d] = eff;
+      m.data[base + d] = eff;
 
       if (firstDepeg === null) {
         const currentRatio = (eff / startEff) * collateralRatio;
@@ -885,39 +834,11 @@ export function simulateOvercollateralizedBTC(
       }
     }
 
-    paths[i] = path;
     depegDays[i] = firstDepeg;
-    finalEff[i] = path[days];
     if (firstDepeg !== null) depegCount++;
+    if (hooks?.onBatch && (i + 1) % batch === 0 && i + 1 < numSimulations)
+      hooks.onBatch(m, depegDays, i + 1);
   }
 
-  const medianPath = new Array<number>(pathLen);
-  const percentile5Path = new Array<number>(pathLen);
-  const percentile95Path = new Array<number>(pathLen);
-  const column = new Array<number>(numSimulations);
-  for (let d = 0; d < pathLen; d++) {
-    for (let i = 0; i < numSimulations; i++) column[i] = paths[i][d];
-    const sorted = column.slice().sort((a, b) => a - b);
-    percentile5Path[d] = quantile(sorted, 0.05);
-    medianPath[d] = quantile(sorted, 0.5);
-    percentile95Path[d] = quantile(sorted, 0.95);
-  }
-
-  let worstIdx = 0;
-  for (let i = 1; i < numSimulations; i++) {
-    if (finalEff[i] < finalEff[worstIdx]) worstIdx = i;
-  }
-
-  return {
-    paths,
-    depegCount,
-    depegProbability: numSimulations > 0 ? depegCount / numSimulations : 0,
-    depegProbabilityCI: wilsonCI(depegCount, numSimulations),
-    seed,
-    depegDays,
-    worstPath: paths[worstIdx],
-    medianPath,
-    percentile5Path,
-    percentile95Path,
-  };
+  return buildResult(m, depegCount, depegDays, seed);
 }

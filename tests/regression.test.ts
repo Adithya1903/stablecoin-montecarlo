@@ -49,8 +49,9 @@ describe("behavioral regression pins", () => {
     });
     // Day-1 impact = 0.11/0.1 > 1 drives max(0.01, 1 − impact + ε) to the
     // 0.01 floor on every path (ε has σ = 0.02).
-    for (const path of r.paths) {
-      expect(path[1]).toBe(0.01);
+    const { data, numPaths, pathLen } = r.paths;
+    for (let i = 0; i < numPaths; i++) {
+      expect(data[i * pathLen + 1]).toBe(0.01);
     }
     expect(r.depegProbability).toBe(1);
   });

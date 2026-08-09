@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { SimulationResult } from "@/lib/types";
+import type { PartialFan } from "@/lib/useSimulation";
+import type { PathMatrix, SimulationResult } from "@/lib/types";
 
 type Props = {
-  result: SimulationResult;
+  /** Completed run, or null while the first run is still streaming in. */
+  result: SimulationResult | null;
+  /** In-flight fan: when set, the chart draws it converging batch by batch. */
+  partial?: PartialFan | null;
   currentPrice: number;
   /** Ratio form, e.g. 1.45 = 145% */
   liquidationThreshold: number;
@@ -23,6 +27,7 @@ type Props = {
 
 export function SimulationChart({
   result,
+  partial = null,
   currentPrice,
   liquidationThreshold,
   collateralRatio,
@@ -77,19 +82,23 @@ export function SimulationChart({
       c.style.height = `${cssHeight}px`;
     }
 
-    drawSpaghetti(canvas, result, currentPrice, liqPrice, dpr);
-    drawOverlay(
-      overlay,
-      result,
-      currentPrice,
-      liqPrice,
-      dpr,
-      cssWidth,
-      cssHeight,
-      fmt,
-      threshLabel
-    );
-  }, [result, currentPrice, liqPrice, fmt, threshLabel, resizeTick]);
+    if (partial && partial.count > 0) {
+      drawPartial(canvas, overlay, partial, liqPrice, dpr, cssWidth, cssHeight);
+    } else if (result) {
+      drawSpaghetti(canvas, result, currentPrice, liqPrice, dpr);
+      drawOverlay(
+        overlay,
+        result,
+        currentPrice,
+        liqPrice,
+        dpr,
+        cssWidth,
+        cssHeight,
+        fmt,
+        threshLabel
+      );
+    }
+  }, [result, partial, currentPrice, liqPrice, fmt, threshLabel, resizeTick]);
 
   return (
     <div className="space-y-4">
@@ -108,15 +117,31 @@ export function SimulationChart({
         />
       </div>
       <ChartFooter
-        depegProbability={result.depegProbability}
-        depegProbabilityCI={result.depegProbabilityCI}
-        seed={result.seed}
-        pathCount={result.paths.length}
+        result={result}
+        partial={partial}
         elapsedMs={elapsedMs}
         onReroll={onReroll}
       />
     </div>
   );
+}
+
+/** min/max over rows [0, count) of a matrix. */
+function matrixBounds(
+  data: Float64Array,
+  count: number,
+  pathLen: number
+): { min: number; max: number } {
+  let min = Infinity;
+  let max = -Infinity;
+  const n = count * pathLen;
+  for (let i = 0; i < n; i++) {
+    const v = data[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (min === max) max = min + 1;
+  return { min, max };
 }
 
 function priceBounds(
@@ -134,6 +159,80 @@ function priceBounds(
   return { min: min - pad, max: max + pad };
 }
 
+function strokePaths(
+  ctx: CanvasRenderingContext2D,
+  data: Float64Array,
+  count: number,
+  pathLen: number,
+  depegDays: (number | null)[],
+  xOf: (d: number) => number,
+  yOf: (p: number) => number
+) {
+  const days = pathLen - 1;
+  const safe = new Path2D();
+  const depeg = new Path2D();
+  for (let i = 0; i < count; i++) {
+    const base = i * pathLen;
+    const target = depegDays[i] !== null ? depeg : safe;
+    target.moveTo(xOf(0), yOf(data[base]));
+    for (let d = 1; d <= days; d++) {
+      target.lineTo(xOf(d), yOf(data[base + d]));
+    }
+  }
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.04;
+  ctx.strokeStyle = "#60A5FA";
+  ctx.stroke(safe);
+  ctx.strokeStyle = "#F87171";
+  ctx.globalAlpha = 0.05;
+  ctx.stroke(depeg);
+  ctx.globalAlpha = 1;
+}
+
+/** In-flight fan: rows so far + a progress note, no percentile overlay yet. */
+function drawPartial(
+  canvas: HTMLCanvasElement,
+  overlay: HTMLCanvasElement,
+  partial: PartialFan,
+  liqPrice: number,
+  dpr: number,
+  cssWidth: number,
+  cssHeight: number
+) {
+  const ctx = canvas.getContext("2d");
+  const octx = overlay.getContext("2d");
+  if (!ctx || !octx) return;
+  const { data, count, pathLen, depegDays, total } = partial;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = canvas.width / dpr;
+  const H = canvas.height / dpr;
+  ctx.clearRect(0, 0, W, H);
+
+  let { min, max } = matrixBounds(data, count, pathLen);
+  min = Math.min(min, liqPrice);
+  const pad = (max - min) * 0.08;
+  min -= pad;
+  max += pad;
+
+  const days = pathLen - 1;
+  const xOf = (d: number) => (d / days) * (W - 1);
+  const yOf = (p: number) =>
+    H - 1 - ((p - min) / Math.max(max - min, 1e-9)) * (H - 2);
+
+  strokePaths(ctx, data, count, pathLen, depegDays, xOf, yOf);
+
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, cssWidth, cssHeight);
+  octx.fillStyle = "#A8A29E";
+  octx.font = "11px ui-monospace, SFMono-Regular, monospace";
+  octx.fillText(
+    `${count.toLocaleString()} / ${total.toLocaleString()} paths…`,
+    6,
+    14
+  );
+}
+
 function drawSpaghetti(
   canvas: HTMLCanvasElement,
   result: SimulationResult,
@@ -148,35 +247,16 @@ function drawSpaghetti(
   const H = canvas.height / dpr;
   ctx.clearRect(0, 0, W, H);
 
-  const { paths, depegDays } = result;
-  if (paths.length === 0) return;
+  const m: PathMatrix = result.paths;
+  if (m.numPaths === 0) return;
 
-  const days = paths[0].length - 1;
+  const days = m.pathLen - 1;
   const { min, max } = priceBounds(result, currentPrice, liqPrice);
   const xOf = (d: number) => (d / days) * (W - 1);
   const yOf = (p: number) =>
     H - 1 - ((p - min) / Math.max(max - min, 1e-9)) * (H - 2);
 
-  const safe = new Path2D();
-  const depeg = new Path2D();
-  for (let i = 0; i < paths.length; i++) {
-    const path = paths[i];
-    const target = depegDays[i] !== null ? depeg : safe;
-    target.moveTo(xOf(0), yOf(path[0]));
-    for (let d = 1; d <= days; d++) {
-      target.lineTo(xOf(d), yOf(path[d]));
-    }
-  }
-
-  ctx.lineWidth = 1;
-  ctx.globalAlpha = 0.04;
-  ctx.strokeStyle = "#60A5FA";
-  ctx.stroke(safe);
-
-  ctx.strokeStyle = "#F87171";
-  ctx.globalAlpha = 0.05;
-  ctx.stroke(depeg);
-  ctx.globalAlpha = 1;
+  strokePaths(ctx, m.data, m.numPaths, m.pathLen, result.depegDays, xOf, yOf);
 }
 
 function drawOverlay(
@@ -197,7 +277,7 @@ function drawOverlay(
   const H = cssHeight;
   ctx.clearRect(0, 0, W, H);
 
-  const days = result.paths[0].length - 1;
+  const days = result.paths.pathLen - 1;
   const { min, max } = priceBounds(result, currentPrice, liqPrice);
   const xOf = (d: number) => (d / days) * (W - 1);
   const yOf = (p: number) =>
@@ -262,23 +342,28 @@ function drawLine(
 }
 
 function ChartFooter({
-  depegProbability,
-  depegProbabilityCI,
-  seed,
-  pathCount,
+  result,
+  partial,
   elapsedMs,
   onReroll,
 }: {
-  depegProbability: number;
-  depegProbabilityCI: [number, number];
-  seed: number;
-  pathCount: number;
+  result: SimulationResult | null;
+  partial: PartialFan | null;
   elapsedMs: number | null;
   onReroll?: () => void;
 }) {
-  const pct = depegProbability * 100;
+  if (!result) {
+    return (
+      <div className="rounded-xl border border-stroke bg-surface/30 px-5 py-4 font-mono text-sm text-muted">
+        {partial
+          ? `Simulating… ${partial.count.toLocaleString()} / ${partial.total.toLocaleString()} paths`
+          : "Simulating…"}
+      </div>
+    );
+  }
+  const pct = result.depegProbability * 100;
   const ciHalf =
-    ((depegProbabilityCI[1] - depegProbabilityCI[0]) / 2) * 100;
+    ((result.depegProbabilityCI[1] - result.depegProbabilityCI[0]) / 2) * 100;
   const color =
     pct < 5 ? "text-emerald-400" : pct < 15 ? "text-amber-400" : "text-red-400";
   return (
@@ -299,7 +384,7 @@ function ChartFooter({
           Paths
         </p>
         <p className="mt-1 font-mono text-lg text-cream">
-          {pathCount.toLocaleString()}
+          {result.paths.numPaths.toLocaleString()}
         </p>
       </div>
       <div>
@@ -315,7 +400,7 @@ function ChartFooter({
           Seed
         </p>
         <p className="mt-1 flex items-center gap-2 font-mono text-xs text-muted">
-          <span>{seed}</span>
+          <span>{result.seed}</span>
           {onReroll && (
             <button
               onClick={onReroll}

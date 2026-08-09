@@ -101,11 +101,10 @@ type Stats = {
 };
 
 function computeStats(result: SimulationResult, currentPrice: number): Stats {
-  const n = result.paths.length;
+  const { data, numPaths: n, pathLen } = result.paths;
   const finalPrices = new Array<number>(n);
   for (let i = 0; i < n; i++) {
-    const path = result.paths[i];
-    finalPrices[i] = path[path.length - 1];
+    finalPrices[i] = data[(i + 1) * pathLen - 1];
   }
   const sorted = finalPrices.slice().sort((a, b) => a - b);
   const medianFinal = sorted[Math.floor(n / 2)] ?? currentPrice;

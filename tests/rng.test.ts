@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Rng, wilsonCI } from "../lib/rng";
 import { ReturnEngine } from "../lib/returns";
-import { simulateDAI } from "../lib/montecarlo";
+import { pathRow, simulateDAI } from "../lib/montecarlo";
 import type { SimulationParams } from "../lib/types";
 
 const P: SimulationParams = {
@@ -26,7 +26,7 @@ describe("seeded RNG", () => {
   it("different seeds ⇒ different paths", () => {
     const a = simulateDAI(3000, P);
     const c = simulateDAI(3000, { ...P, seed: 43 });
-    expect(a.paths[0]).not.toEqual(c.paths[0]);
+    expect(pathRow(a.paths, 0)).not.toEqual(pathRow(c.paths, 0));
   });
 
   it("normal() moments: mean ≈ 0, var ≈ 1 at N=100k", () => {
