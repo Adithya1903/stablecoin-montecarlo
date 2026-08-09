@@ -10,32 +10,47 @@ type Props = {
 
 type Preset = {
   label: string;
+  /** Coin ids this preset applies to — filters the grid by selection. */
+  coins: string[];
   patch: Partial<SimulationParams>;
 };
+
+const COLLATERAL_COINS = ["dai", "lusd", "gho", "usbd"];
 
 const PRESETS: Preset[] = [
   {
     label: "Normal Market",
+    coins: COLLATERAL_COINS,
     patch: { volatility: 0.04, initialCrash: 0, collateralRatio: 1.5 },
   },
   {
     label: "Black Thursday",
+    coins: COLLATERAL_COINS,
     patch: { volatility: 0.08, initialCrash: -0.4, collateralRatio: 1.5 },
   },
   {
     label: "UST-Style Bank Run",
-    patch: { volatility: 0.12, initialCrash: -0.3, collateralRatio: 1.2 },
+    coins: COLLATERAL_COINS,
+    patch: {
+      volatility: 0.12,
+      initialCrash: -0.3,
+      collateralRatio: 1.2,
+      liquidationThreshold: 1.15,
+    },
   },
   {
     label: "Conservative",
+    coins: COLLATERAL_COINS,
     patch: { volatility: 0.04, initialCrash: 0, collateralRatio: 2.0 },
   },
   {
     label: "SVB Crisis",
+    coins: ["dai"],
     patch: { volatility: 0.06, initialCrash: 0, usdcShock: -0.1 },
   },
   {
     label: "Recovery Mode Stress",
+    coins: ["lusd"],
     patch: {
       volatility: 0.08,
       initialCrash: -0.2,
@@ -45,14 +60,17 @@ const PRESETS: Preset[] = [
   },
   {
     label: "Correlated Crash",
+    coins: ["gho"],
     patch: { volatility: 0.08, initialCrash: -0.25, correlation: 1.0 },
   },
   {
     label: "Diversified",
+    coins: ["gho"],
     patch: { volatility: 0.04, initialCrash: 0, correlation: 0.3 },
   },
   {
     label: "Normal Bull Market",
+    coins: ["usde"],
     patch: {
       fundingRateVol: 0.0003,
       fundingRateShock: 0,
@@ -61,6 +79,7 @@ const PRESETS: Preset[] = [
   },
   {
     label: "Bear Market",
+    coins: ["usde"],
     patch: {
       fundingRateVol: 0.001,
       fundingRateShock: -0.15,
@@ -69,6 +88,7 @@ const PRESETS: Preset[] = [
   },
   {
     label: "Extreme Stress",
+    coins: ["usde"],
     patch: {
       fundingRateVol: 0.003,
       fundingRateShock: -0.3,
@@ -77,10 +97,12 @@ const PRESETS: Preset[] = [
   },
   {
     label: "Normal Operations",
+    coins: ["usdc", "usdt"],
     patch: { forceDay1Event: false, reserveLiquidity: 1.0 },
   },
   {
     label: "SVB Scenario",
+    coins: ["usdc", "usdt"],
     patch: {
       forceDay1Event: true,
       reserveLiquidity: 0.5,
@@ -89,6 +111,7 @@ const PRESETS: Preset[] = [
   },
   {
     label: "Regulatory Action",
+    coins: ["usdc", "usdt"],
     patch: {
       forceDay1Event: true,
       reserveLiquidity: 0.6,
@@ -97,6 +120,7 @@ const PRESETS: Preset[] = [
   },
   {
     label: "May 7, 2022 (Actual Collapse)",
+    coins: ["ust"],
     patch: {
       initialSellPressure: 0.11,
       reflexivityFactor: 4,
@@ -106,6 +130,7 @@ const PRESETS: Preset[] = [
   },
   {
     label: "Mild Stress Test",
+    coins: ["ust"],
     patch: {
       initialSellPressure: 0.03,
       reflexivityFactor: 2,
@@ -113,6 +138,7 @@ const PRESETS: Preset[] = [
   },
   {
     label: "What If Larger Reserves?",
+    coins: ["ust"],
     patch: {
       initialSellPressure: 0.11,
       reflexivityFactor: 4,
@@ -129,6 +155,14 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
   const liqNearCR =
     params.collateralRatio - params.liquidationThreshold <= 0.1;
 
+  const visiblePresets = selectedId
+    ? PRESETS.filter((p) => p.coins.includes(selectedId))
+    : PRESETS;
+  const isActive = (p: Preset) =>
+    Object.entries(p.patch).every(
+      ([k, v]) => params[k as keyof SimulationParams] === v
+    );
+
   return (
     <div className="rounded-xl border border-stroke bg-surface/60 p-5 space-y-5">
       <div>
@@ -136,15 +170,22 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
           Presets
         </p>
         <div className="grid grid-cols-2 gap-2">
-          {PRESETS.map((p) => (
-            <button
-              key={p.label}
-              onClick={() => patch(p.patch)}
-              className="rounded-md border border-stroke bg-charcoal px-3 py-2 text-xs font-medium text-cream transition hover:border-cream/60 hover:bg-stroke/40"
-            >
-              {p.label}
-            </button>
-          ))}
+          {visiblePresets.map((p) => {
+            const active = isActive(p);
+            return (
+              <button
+                key={p.label}
+                onClick={() => patch(p.patch)}
+                className={`rounded-md border px-3 py-2 text-xs font-medium transition ${
+                  active
+                    ? "border-cream bg-stroke/40 text-cream"
+                    : "border-stroke bg-charcoal text-cream hover:border-cream/60 hover:bg-stroke/40"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
