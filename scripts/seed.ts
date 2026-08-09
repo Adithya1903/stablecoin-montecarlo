@@ -60,8 +60,9 @@ function main() {
 
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   if (fs.existsSync(DB_PATH)) fs.rmSync(DB_PATH);
+  // Keep the default rollback journal (not WAL): the result is a single .db
+  // file that read-only serverless filesystems can open without sidecar files.
   const db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
 
   for (const file of fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()) {
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8');

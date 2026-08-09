@@ -13,8 +13,14 @@ let _db: BetterSQLite3Database | null = null;
 
 export function getDb(): BetterSQLite3Database {
   if (!_db) {
-    const sqlite = new Database(DB_PATH, { readonly: false });
-    sqlite.pragma('journal_mode = WAL');
+    // Serverless filesystems (e.g. Vercel's /var/task) are read-only; the app
+    // only reads, so fall back to a read-only handle when writes are denied.
+    let sqlite: Database.Database;
+    try {
+      sqlite = new Database(DB_PATH, { fileMustExist: true });
+    } catch {
+      sqlite = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+    }
     _db = drizzle(sqlite);
   }
   return _db;
