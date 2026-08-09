@@ -81,7 +81,7 @@ export function DashboardClient({
   summaries = {},
   fetchError = null,
   fundingMeanDaily = 0.0001,
-  fundingVolDaily = 0.02,
+  fundingVolDaily = 0.0005,
 }: {
   ethPrice: number;
   btcPrice: number;

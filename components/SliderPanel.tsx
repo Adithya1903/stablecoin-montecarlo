@@ -54,7 +54,7 @@ const PRESETS: Preset[] = [
   {
     label: "Normal Bull Market",
     patch: {
-      fundingRateVol: 0.01,
+      fundingRateVol: 0.0003,
       fundingRateShock: 0,
       reserveFund: 50_000_000,
     },
@@ -62,7 +62,7 @@ const PRESETS: Preset[] = [
   {
     label: "Bear Market",
     patch: {
-      fundingRateVol: 0.03,
+      fundingRateVol: 0.001,
       fundingRateShock: -0.15,
       reserveFund: 50_000_000,
     },
@@ -70,7 +70,7 @@ const PRESETS: Preset[] = [
   {
     label: "Extreme Stress",
     patch: {
-      fundingRateVol: 0.05,
+      fundingRateVol: 0.003,
       fundingRateShock: -0.3,
       reserveFund: 30_000_000,
     },
@@ -246,12 +246,12 @@ export function SliderPanel({ params, onChange, selectedId }: Props) {
         <>
           <Slider
             label="Funding Rate Volatility"
-            value={params.fundingRateVol ?? 0.02}
-            min={0.005}
-            max={0.1}
-            step={0.005}
-            display={pct(params.fundingRateVol ?? 0.02)}
-            subtitle="How much the daily funding rate swings. Higher during volatile markets."
+            value={params.fundingRateVol ?? 0.0005}
+            min={0.0001}
+            max={0.01}
+            step={0.0001}
+            display={`${((params.fundingRateVol ?? 0.0005) * 100).toFixed(2)}%`}
+            subtitle="Daily funding-rate σ (% of notional). Real perp funding is ~0.01–0.1%/day; higher during volatile markets."
             onChange={(v) => patch({ fundingRateVol: v })}
           />
           <Slider

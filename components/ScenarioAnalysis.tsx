@@ -235,7 +235,7 @@ function renderSetup(
   if (isUsde) {
     const reserve = p.reserveFund ?? 50_000_000;
     const shock = p.fundingRateShock ?? 0;
-    const fundVol = (p.fundingRateVol ?? 0.02) * 100;
+    const fundVol = (p.fundingRateVol ?? 0.0005) * 100;
     return [
       <p key="usde-1">
         Unlike overcollateralized stablecoins, USDe&apos;s risk is <Hi>not</Hi>{" "}

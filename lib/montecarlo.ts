@@ -410,7 +410,11 @@ export function simulateFiatBacked(params: SimulationParams): SimulationResult {
 export function simulateUSDe(params: SimulationParams): SimulationResult {
   const days = params.days;
   const numSimulations = params.numSimulations;
-  const fundingVol = params.fundingRateVol ?? 0.02;
+  // Daily funding σ as a fraction of notional. Real perp funding daily σ is
+  // on the order of 0.01–0.1%; 0.05% is a realistic default. (An earlier
+  // 0.02 default meant 2%/day — $60M daily P&L σ on a $3B supply — which
+  // made depeg near-certain regardless of other settings.)
+  const fundingVol = params.fundingRateVol ?? 0.0005;
   const shockApr = params.fundingRateShock ?? 0;
   const startReserve = params.reserveFund ?? 50_000_000;
   const totalSupply = params.totalSupply ?? 3_000_000_000;

@@ -36,7 +36,7 @@ export default async function Home({
 
   // Binance funding rate is per 8-hour window (3/day). Convert to daily.
   const fundingMeanDaily = funding ? funding.mean * 3 : 0.0001;
-  const fundingVolDaily = funding ? funding.stdDev * Math.sqrt(3) : 0.02;
+  const fundingVolDaily = funding ? funding.stdDev * Math.sqrt(3) : 0.0005;
 
   const ethPrice = ethRes?.spotUsd ?? (fallbackMode ? 2400 : null);
   const btcPrice = btcRes?.spotUsd ?? (fallbackMode ? 85000 : null);
